@@ -2,8 +2,8 @@
 
 > Three RAG-powered AI tools for SAP Data Migration & Analytics professionals
 
-**Author:** Kishore — SAP Data Migration Lead → SAP BTP + AI Senior Consultant  
-**Stack:** Streamlit · Gemini Flash · Claude Sonnet 4.6 · Groq · Supabase + pgvector  
+**Author:** Sparky — SAP Data Migration Lead → SAP BTP + AI Senior Consultant  
+**Stack:** Streamlit · Groq Llama 3.3 70B · Claude Sonnet 4.6 · Supabase + pgvector  
 **Status:** Phase 0 Complete — Phase 1 Building
 
 ---
@@ -26,9 +26,10 @@
 - 🟦 **L1** — Current project errors and fixes
 - 🟩 **L2** — Same client, other projects
 - 🟨 **L3** — Cross-client anonymised knowledge base (auto-promoted, PII stripped)
-- ⬜ **L4** — LLM fallback (Gemini / Claude / Groq)
+- ⬜ **L4** — LLM fallback (Groq / Claude)
 
-Every answer shows exactly which level answered it. Knowledge base grows automatically as your team logs resolutions.
+Every answer shows exactly which level answered it.
+Knowledge base grows automatically as your team logs resolutions.
 
 ---
 
@@ -37,10 +38,9 @@ Every answer shows exactly which level answered it. Knowledge base grows automat
 | Layer | Technology | Cost |
 |-------|-----------|------|
 | UI | Streamlit | Free |
-| Default LLM | Google Gemini Flash | Free tier |
+| Default LLM | Groq Llama 3.3 70B | Free — 14,400 req/day |
 | Premium LLM | Claude Sonnet 4.6 | ~$0.01–0.02/query |
-| Fallback LLM | Groq Llama 3.1 70B | Free — 14,400 req/day |
-| Screenshot OCR | Gemini Vision | Free tier |
+| Screenshot OCR | Groq Llama 4 Scout Vision | Free |
 | Vector DB | Supabase + pgvector | Free tier |
 | Relational DB | Supabase PostgreSQL | Free tier |
 | Hosting | Streamlit Community Cloud | Free |
@@ -49,27 +49,27 @@ Every answer shows exactly which level answered it. Knowledge base grows automat
 
 ## Project Structure
 
+
 sap-ai-platform/
-├── app.py                                        # Home page
+├── app.py
 ├── requirements.txt
-├── .env.example                                  # API key template
+├── .env.example
 ├── pages/
-│   ├── 1_SAP_Data_Migration_Error_Analyzer.py   # Tool 1
-│   ├── 2_SAP_Data_Migration_Data_Quality_Checker.py  # Tool 2
-│   ├── 3_NL_Query.py                            # Tool 3
-│   └── 4_Admin_Panel.py                         # Admin
+│   ├── 1_SAP_Data_Migration_Error_Analyzer.py
+│   ├── 2_SAP_Data_Migration_Data_Quality_Checker.py
+│   ├── 3_NL_Query.py
+│   └── 4_Admin_Panel.py
 ├── utils/
-│   ├── llm_router.py       # Unified LLM router + auto-fallback
-│   ├── llm_gemini.py       # Gemini Flash connector
-│   ├── llm_claude.py       # Claude Sonnet 4.6 connector
-│   ├── llm_groq.py         # Groq fallback connector
-│   ├── supabase_client.py  # DB + pgvector RAG helpers
-│   ├── file_loader.py      # CSV/Excel/image upload utilities
-│   └── response_renderer.py # Confidence badges, source labels
+│   ├── llm_router.py        # Unified router — Groq default, Claude premium
+│   ├── llm_groq.py          # Groq text + vision connector
+│   ├── llm_claude.py        # Claude Sonnet 4.6 connector
+│   ├── supabase_client.py   # DB + pgvector RAG helpers
+│   ├── file_loader.py       # CSV/Excel/image upload utilities
+│   └── response_renderer.py # Confidence badges, source labels, T-codes
 ├── components/
-│   └── styles.css          # Dark theme
+│   └── styles.css
 └── .streamlit/
-└── config.toml         # Theme config
+└── config.toml
 
 ---
 
@@ -86,5 +86,16 @@ sap-ai-platform/
 
 ---
 
-*Built by Sparky — SAP Data Migration Lead pivoting to SAP BTP + AI Senior Consultant*  
+## LLM Strategy
+
+| Provider | Role | Cost |
+|----------|------|------|
+| Groq Llama 3.3 70B | Default — all standard queries + vision | Free |
+| Claude Sonnet 4.6 | Premium — complex errors, critical cutover | ~$0.01–0.02/query |
+
+Switch between providers instantly from the Admin Panel — no code change needed.
+
+---
+
+*Built by Sparky — SAP Data Migration Lead*  
 *IITM Pravartak Advanced Certificate in Applied AI & Deep Learning*
