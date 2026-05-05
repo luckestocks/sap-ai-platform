@@ -20,23 +20,20 @@ st.markdown("# ⚙️ Admin Control Panel")
 db = init_supabase()
 db_connected = db is not None
 
-# ── Status bar ────────────────────────────────────────────────────────────────
 s1, s2, s3 = st.columns(3)
 with s1:
     st.metric("Database", "🟢 Connected" if db_connected else "🔴 Not configured")
 with s2:
     provider_map = {
-        "gemini": "🟢 Gemini Flash",
+        "groq":   "🟠 Groq Llama 3.3 70B",
         "claude": "🟣 Claude Sonnet 4.6",
-        "groq":   "🟠 Groq Llama 3.1",
     }
-    st.metric("Active LLM", provider_map.get(st.session_state.get("llm_provider", "gemini"), "Unknown"))
+    st.metric("Active LLM", provider_map.get(st.session_state.get("llm_provider", "groq"), "Unknown"))
 with s3:
     st.metric("Active Client", st.session_state.get("active_client") or "None")
 
 st.divider()
 
-# ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🔀 LLM Config",
     "🏢 Clients & Projects",
@@ -50,16 +47,15 @@ with tab1:
     st.markdown("### Global LLM Switch")
     st.caption("Applies to all three tools simultaneously. No code change required.")
 
-    current = st.session_state.get("llm_provider", "gemini")
+    current = st.session_state.get("llm_provider", "groq")
     new_provider = st.radio(
         "Select LLM Provider",
-        options=["gemini", "claude", "groq"],
+        options=["groq", "claude"],
         format_func=lambda x: {
-            "gemini": "🟢 Gemini Flash — Free tier — Standard queries",
+            "groq":   "🟠 Groq Llama 3.3 70B — Free — 14,400 req/day — Default",
             "claude": "🟣 Claude Sonnet 4.6 — ~$0.01–0.02/query — Complex errors & cutover",
-            "groq":   "🟠 Groq Llama 3.1 70B — Free — 14,400 req/day — Fallback",
         }[x],
-        index=["gemini", "claude", "groq"].index(current),
+        index=["groq", "claude"].index(current),
     )
 
     if new_provider != current:
@@ -70,16 +66,13 @@ with tab1:
 
     st.divider()
     st.markdown("#### Provider Comparison")
-    c1, c2, c3 = st.columns(3)
+    c1, c2 = st.columns(2)
     with c1:
-        st.markdown("**🟢 Gemini Flash**")
-        st.markdown("- ✅ Free tier\n- ✅ Native screenshot OCR\n- ✅ Fast\n- ⚠️ Daily limits apply")
+        st.markdown("**🟠 Groq Llama 3.3 70B — Default**")
+        st.markdown("- ✅ Completely free\n- ✅ 14,400 req/day\n- ✅ Very fast\n- ✅ Text + Vision\n- ✅ No region restrictions")
     with c2:
-        st.markdown("**🟣 Claude Sonnet 4.6**")
-        st.markdown("- 💰 ~$0.01–0.02/query\n- ✅ Deepest reasoning\n- ✅ Best for cutover\n- ✅ Vision capable")
-    with c3:
-        st.markdown("**🟠 Groq Llama 3.1**")
-        st.markdown("- ✅ Free — 14,400 req/day\n- ✅ Very fast\n- ❌ No vision\n- ✅ Auto-fallback")
+        st.markdown("**🟣 Claude Sonnet 4.6 — Premium**")
+        st.markdown("- 💰 ~$0.01–0.02/query\n- ✅ Deepest reasoning\n- ✅ Best for cutover\n- ✅ Text + Vision\n- ✅ Switch in one click")
 
 # ── Tab 2: Clients & Projects ─────────────────────────────────────────────────
 with tab2:
