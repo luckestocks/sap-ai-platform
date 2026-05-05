@@ -10,7 +10,13 @@ from typing import Optional
 
 
 def _get_client() -> Groq:
-    api_key = os.getenv("GROQ_API_KEY")
+    try:
+        import streamlit as st
+        api_key = st.secrets.get("GROQ_API_KEY", "")
+    except Exception:
+        api_key = ""
+    if not api_key:
+        api_key = os.getenv("GROQ_API_KEY", "")
     if not api_key:
         raise ValueError("GROQ_API_KEY not set in environment / .env")
     return Groq(api_key=api_key)
