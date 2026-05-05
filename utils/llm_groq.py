@@ -34,7 +34,7 @@ def groq_query(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
     response = client.chat.completions.create(
-        model="llama-3.1-70b-versatile",
+       model="llama-3.3-70b-versatile",
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
