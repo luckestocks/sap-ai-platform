@@ -2,7 +2,7 @@
 
 > Three RAG-powered AI tools for SAP Data Migration & Analytics professionals
 
-**Author:** Sparky — SAP Data Migration Lead → SAP BTP + AI Senior Consultant  
+**Author:** Kishore — SAP Data Migration Lead → SAP BTP + AI Senior Consultant  
 **Stack:** Streamlit · Groq Llama 3.3 70B · Claude Sonnet 4.6 · Supabase + pgvector  
 **Status:** Phase 0 Complete — Phase 1 Building
 
@@ -12,7 +12,7 @@
 
 | # | Tool | Purpose | Status |
 |---|------|---------|--------|
-| 1 | **SAP Migration Error Analyzer** | Diagnose SAP load errors with 4-level RAG knowledge hierarchy | Phase 1 |
+| 1 | **SAP Data Migration Error Analyzer** | Diagnose SAP load errors with 4-level RAG knowledge hierarchy | Phase 1 |
 | 2 | **SAP Data Quality Checker** | Score and flag data quality issues in migration extracts | Phase 2 |
 | 3 | **Datasphere NL Query** | Plain English → SQL → answer + Plotly chart | Phase 3 |
 
