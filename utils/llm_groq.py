@@ -1,6 +1,7 @@
 """
 utils/llm_groq.py
-Groq Llama 3.1 70B connector — fallback LLM for SAP AI Platform.
+Groq Llama 3.3 70B connector — fallback LLM for SAP AI Platform.
+14,400 requests/day free tier. Text only — no vision support.
 """
 
 import os
@@ -27,14 +28,20 @@ def groq_query(
     temperature: float = 0.2,
     max_tokens: int = 2048,
 ) -> str:
+    """
+    Send a text prompt to Groq Llama 3.3 70B and return the response string.
+    Note: Groq does not support vision/image input — text only.
+    """
     from groq import Groq
     client = Groq(api_key=_get_api_key())
+
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
+
     response = client.chat.completions.create(
-       model="llama-3.3-70b-versatile",
+        model="llama-3.3-70b-versatile",
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
