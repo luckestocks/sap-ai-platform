@@ -10,10 +10,23 @@ import google.generativeai as genai
 from typing import Optional
 
 
+def _get_api_key() -> str:
+    """Read Gemini API key from Streamlit secrets or environment variable."""
+    try:
+        import streamlit as st
+        key = st.secrets.get("GEMINI_API_KEY", "")
+        if key:
+            return key
+    except Exception:
+        pass
+    key = os.getenv("GEMINI_API_KEY", "")
+    if not key:
+        raise ValueError("GEMINI_API_KEY not set in Streamlit secrets or environment")
+    return key
+
+
 def _get_client() -> genai.GenerativeModel:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise ValueError("GEMINI_API_KEY not set in environment / .env")
+    api_key = _get_api_key()
     genai.configure(api_key=api_key)
     return genai.GenerativeModel("gemini-1.5-flash")
 
