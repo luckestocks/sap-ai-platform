@@ -1,0 +1,142 @@
+/* SAP AI Platform — Custom Styles */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@300;400;600;700&display=swap');
+
+:root {
+    --sap-blue: #0070f3;
+    --sap-blue-dark: #0052cc;
+    --sap-green: #00a86b;
+    --sap-purple: #7c3aed;
+    --sap-orange: #f59e0b;
+    --sap-red: #ef4444;
+    --bg-primary: #0a0e1a;
+    --bg-card: #111827;
+    --bg-card-hover: #1a2234;
+    --border: #1e2d45;
+    --text-primary: #f1f5f9;
+    --text-muted: #64748b;
+    --font-mono: 'IBM Plex Mono', monospace;
+    --font-sans: 'IBM Plex Sans', sans-serif;
+}
+
+.stApp {
+    font-family: var(--font-sans) !important;
+}
+
+.hero {
+    text-align: center;
+    padding: 3rem 1rem 2rem;
+    background: linear-gradient(135deg, rgba(0,112,243,0.08) 0%, rgba(124,58,237,0.08) 100%);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    margin-bottom: 2rem;
+}
+.hero h1 {
+    font-family: var(--font-sans);
+    font-size: 2.8rem;
+    font-weight: 700;
+    margin: 0;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+.hero-sub {
+    font-size: 1.1rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+    font-weight: 300;
+}
+
+.tool-card {
+    padding: 1.5rem;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    height: 100%;
+    transition: all 0.2s ease;
+    margin-bottom: 0.5rem;
+}
+.tool-card:hover {
+    background: var(--bg-card-hover);
+    transform: translateY(-2px);
+}
+.tool-card--blue  { border-left: 3px solid var(--sap-blue); }
+.tool-card--green { border-left: 3px solid var(--sap-green); }
+.tool-card--purple{ border-left: 3px solid var(--sap-purple); }
+
+.tool-icon { font-size: 2rem; margin-bottom: 0.75rem; }
+.tool-card h3 { margin: 0 0 0.5rem; font-weight: 600; font-size: 1.1rem; }
+.tool-card p  { color: var(--text-muted); font-size: 0.9rem; margin: 0 0 1rem; line-height: 1.5; }
+
+.tool-badge {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-family: var(--font-mono);
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.06);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    letter-spacing: 0.05em;
+}
+
+.badge-high   { color: #22c55e; font-weight: 600; }
+.badge-medium { color: #f59e0b; font-weight: 600; }
+.badge-low    { color: #ef4444; font-weight: 600; }
+
+.source-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 0.3rem 0.7rem;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+}
+.source-l1 { background: rgba(59,130,246,0.15); border: 1px solid rgba(59,130,246,0.3); color: #93c5fd; }
+.source-l2 { background: rgba(34,197,94,0.15);  border: 1px solid rgba(34,197,94,0.3);  color: #86efac; }
+.source-l3 { background: rgba(234,179,8,0.15);  border: 1px solid rgba(234,179,8,0.3);  color: #fde68a; }
+.source-l4 { background: rgba(100,116,139,0.15);border: 1px solid rgba(100,116,139,0.3);color: #cbd5e1; }
+
+.response-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-top: 1rem;
+}
+.response-card pre {
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.tcode-pill {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    padding: 0.2rem 0.5rem;
+    background: rgba(0,112,243,0.12);
+    border: 1px solid rgba(0,112,243,0.25);
+    color: #60a5fa;
+    border-radius: 4px;
+    margin: 0.15rem;
+}
+
+.quality-score {
+    font-size: 3rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+}
+.quality-good    { color: #22c55e; }
+.quality-warning { color: #f59e0b; }
+.quality-poor    { color: #ef4444; }
+
+.priority-critical { color: #ef4444; font-weight: 700; font-family: var(--font-mono); }
+.priority-high     { color: #f97316; font-weight: 700; font-family: var(--font-mono); }
+.priority-medium   { color: #f59e0b; font-weight: 600; font-family: var(--font-mono); }
+.priority-low      { color: #64748b; font-weight: 600; font-family: var(--font-mono); }
