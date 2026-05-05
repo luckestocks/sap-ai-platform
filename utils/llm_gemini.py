@@ -26,7 +26,7 @@ def _get_api_key() -> str:
 def _get_client() -> genai.GenerativeModel:
     api_key = _get_api_key()
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel("gemini-2.0-flash")
+   return genai.GenerativeModel("gemini-1.5-flash")
 
 
 def gemini_query(
