@@ -1,7 +1,6 @@
 """
 utils/llm_gemini.py
 Google Gemini Flash connector — default LLM for SAP AI Platform.
-Handles text and vision (screenshot OCR) requests.
 """
 
 import os
@@ -11,7 +10,6 @@ from typing import Optional
 
 
 def _get_api_key() -> str:
-    """Read Gemini API key from Streamlit secrets or environment variable."""
     try:
         import streamlit as st
         key = st.secrets.get("GEMINI_API_KEY", "")
@@ -21,14 +19,14 @@ def _get_api_key() -> str:
         pass
     key = os.getenv("GEMINI_API_KEY", "")
     if not key:
-        raise ValueError("GEMINI_API_KEY not set in Streamlit secrets or environment")
+        raise ValueError("GEMINI_API_KEY not set")
     return key
 
 
 def _get_client() -> genai.GenerativeModel:
     api_key = _get_api_key()
     genai.configure(api_key=api_key)
-    return genai.GenerativeModel("gemini-1.5-flash")
+    return genai.GenerativeModel("gemini-2.0-flash")
 
 
 def gemini_query(
@@ -37,9 +35,6 @@ def gemini_query(
     temperature: float = 0.2,
     max_tokens: int = 2048,
 ) -> str:
-    """
-    Send a text prompt to Gemini Flash and return the response string.
-    """
     model = _get_client()
     full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
     response = model.generate_content(
@@ -58,9 +53,6 @@ def gemini_vision_query(
     mime_type: str = "image/png",
     system_prompt: Optional[str] = None,
 ) -> str:
-    """
-    Send an image + text prompt to Gemini Flash Vision (for screenshot OCR).
-    """
     model = _get_client()
     full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
     image_part = {
