@@ -31,8 +31,8 @@ st.set_page_config(
 with open("components/styles.css") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-st.markdown("# 🔧 SAP Migration Error Analyzer")
-st.markdown("Diagnose SAP load errors using AI + hierarchical project memory.")
+st.markdown("# 🔧 SAP Data Migration Error Analyzer")
+st.markdown("Diagnose SAP Data Migration load errors using AI + hierarchical project memory.")
 
 # ── RAG level badge helper ────────────────────────────────────────────────────
 def render_rag_badge(level: int):
