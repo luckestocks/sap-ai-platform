@@ -56,8 +56,8 @@ def global_first_rag(
     query: str,
     project_id: str = None,
     client_id: str = None,
-    threshold: float = 0.70,
-    match_count: int = 3,
+    threshold: float = 0.65,
+    match_count: int = 5,
 ) -> dict:
     supabase  = get_supabase()
     embedding = embed_text(query)
@@ -409,16 +409,21 @@ if st.session_state.get("last_diagnosis"):
     if rag_results:
         with st.expander(
             f"📚 {len(rag_results)} similar past resolution(s) found — {rag_label}",
-            expanded=False,
+            expanded=True,
         ):
-            for r in rag_results:
-                st.markdown(
-                    f"**{r.get('error_code') or 'Error'}** — "
-                    f"similarity {r['similarity']:.0%} | "
-                    f"phase: {r.get('load_phase') or '—'}"
-                )
-                st.caption(r.get("fix_steps") or "")
-                st.markdown("---")
+            for i, r in enumerate(rag_results, 1):
+                st.markdown(f"**Match {i}**")
+                mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+                mc1.metric("Similarity", f"{r['similarity']:.0%}")
+                mc2.metric("Phase", r.get("load_phase") or "—")
+                mc3.metric("Error Type", r.get("error_type") or "—")
+                mc4.metric("Client", r.get("client_name") or "—")
+                mc5.metric("Project", r.get("project_name") or "—")
+                st.markdown("**T-codes:** " + (", ".join(r.get("t_codes") or []) or "—"))
+                st.markdown("**Fix applied:**")
+                st.info(r.get("fix_steps") or "—")
+                if i < len(rag_results):
+                    st.markdown("---")
 
     st.markdown("### Diagnosis")
     render_response_card(
