@@ -119,8 +119,9 @@ def save_resolution(
     """
     supabase = get_supabase()
 
-    # Generate embedding from error message + root cause combined
-    embed_input = f"{error_message}\n{root_cause}"
+    # Embed error message + actual fix steps
+    # Using fix_steps (not root_cause) so different fixes for same error get distinct embeddings
+    embed_input = f"{error_message}\n{fix_steps}"
     embedding = embed_text(embed_input)
 
     # Save to error_resolutions
@@ -159,7 +160,7 @@ def save_resolution(
             "t_codes": t_codes or [],
             "load_phase": load_phase,
             "time_to_resolve": time_to_resolve,
-            "embedding": embed_text(f"{anon['error_message']}\n{anon['root_cause']}"),
+            "embedding": embed_text(f"{anon['error_message']}\n{anon['fix_steps']}"),
         }
         kb_res = supabase.table("cross_client_kb").insert(kb_row).execute()
         kb_id = kb_res.data[0]["id"] if kb_res.data else None
