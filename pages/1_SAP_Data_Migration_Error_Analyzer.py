@@ -23,7 +23,7 @@ from utils.supabase_client import (
 )
 
 st.set_page_config(
-    page_title="SAP Migration Error Analyzer | SAP AI Platform",
+    page_title="SAP Data Migration Error Analyzer | SAP AI Platform",
     page_icon="🔧",
     layout="wide",
 )
