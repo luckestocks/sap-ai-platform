@@ -59,14 +59,6 @@ def global_first_rag(
     threshold: float = 0.70,
     match_count: int = 3,
 ) -> dict:
-    """
-    Search order:
-      L3 — Global KB (always, no auth needed)
-      L1 — Project KB (if project_id provided)
-      L2 — Client KB  (if client_id provided)
-      L4 — LLM fallback
-    Returns first level with hits.
-    """
     supabase  = get_supabase()
     embedding = embed_text(query)
 
@@ -82,7 +74,7 @@ def global_first_rag(
     if res.data:
         return {"level": 3, "label": "Global KB", "results": res.data}
 
-    # L1 — project-specific (only if project selected)
+    # L1 — project-specific
     if project_id:
         res = supabase.rpc(
             "match_project_errors",
@@ -96,7 +88,7 @@ def global_first_rag(
         if res.data:
             return {"level": 1, "label": "Project KB", "results": res.data}
 
-    # L2 — client-wide (only if client + project selected)
+    # L2 — client-wide
     if client_id and project_id:
         res = supabase.rpc(
             "match_client_errors",
@@ -114,7 +106,7 @@ def global_first_rag(
     return {"level": 4, "label": "LLM Fallback", "results": []}
 
 
-# ── Optional context (collapsed — not needed for search) ─────────────────────
+# ── Optional context ──────────────────────────────────────────────────────────
 with st.expander("📁 Project Context (optional — refines KB search, or set when saving)", expanded=False):
     ctx_col1, ctx_col2, ctx_col3 = st.columns(3)
 
@@ -345,13 +337,35 @@ if diagnose_btn:
             )
             response, provider = query_llm(diagnosis_prompt, system_prompt)
 
-            # Step 5: Parse confidence
-confidence = "medium"
-resp_upper = response.upper()
-if any(p in resp_upper for p in ["CONFIDENCE: HIGH", "CONFIDENCE LEVEL: HIGH", "HIGH CONFIDENCE", "LEVEL: HIGH"]):
-    confidence = "high"
-elif any(p in resp_upper for p in ["CONFIDENCE: LOW", "CONFIDENCE LEVEL: LOW", "LOW CONFIDENCE", "LEVEL: LOW"]):
-    confidence = "low"
+            # Step 5: Parse confidence (fixed — catches all LLM phrasings)
+            confidence = "medium"
+            resp_upper = response.upper()
+            if any(p in resp_upper for p in [
+                "CONFIDENCE: HIGH", "CONFIDENCE LEVEL: HIGH",
+                "HIGH CONFIDENCE", "LEVEL: HIGH"
+            ]):
+                confidence = "high"
+            elif any(p in resp_upper for p in [
+                "CONFIDENCE: LOW", "CONFIDENCE LEVEL: LOW",
+                "LOW CONFIDENCE", "LEVEL: LOW"
+            ]):
+                confidence = "low"
+
+            # Step 6: Render result
+            st.markdown("### Diagnosis")
+            render_response_card(
+                response_text=response,
+                confidence=confidence,
+                source_level=source_level,
+                source_detail=source_detail,
+                provider_used=provider,
+            )
+
+            # Persist to session for the save form below
+            st.session_state["last_error_text"] = error_text
+            st.session_state["last_error_type"] = error_type
+            st.session_state["last_diagnosis"]  = response
+            st.session_state["last_load_phase"] = load_phase
 
 
 # ── Save Resolution — always visible after an analysis ───────────────────────
@@ -386,7 +400,12 @@ if st.session_state.get("last_error_text"):
                 )
                 save_project_id = save_project_ids.get(save_project_sel)
             else:
-                st.selectbox("Tag to Project *", options=["— select client first —"], disabled=True, key="save_project_disabled")
+                st.selectbox(
+                    "Tag to Project *",
+                    options=["— select client first —"],
+                    disabled=True,
+                    key="save_project_disabled",
+                )
                 save_project_id = None
 
         with save_col3:
