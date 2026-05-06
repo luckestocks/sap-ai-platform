@@ -200,15 +200,35 @@ with input_tab1:
     )
 
 with input_tab2:
-    uploaded_img = render_file_uploader(
-        label="Upload error screenshot (PNG, JPG, WEBP)",
-        accept=["png", "jpg", "jpeg", "webp"],
-        key="copilot_screenshot",
-        help_text="Gemini Vision will extract the error text automatically.",
+    from streamlit_paste_button import paste_image_button as pbutton
+    import io
+
+    st.caption("📋 Take a snip (Win+Shift+S) then click the button below and press Ctrl+V — no saving needed.")
+    paste_result = pbutton(
+        label="📋 Paste Screenshot",
+        background_color="#1E88E5",
+        hover_background_color="#1565C0",
+        key="paste_screenshot",
     )
-    if uploaded_img:
-        image_bytes, mime_type = get_image_bytes(uploaded_img)
-        st.image(uploaded_img, caption="Uploaded screenshot", use_column_width=True)
+
+    if paste_result.image_data is not None:
+        img = paste_result.image_data
+        st.image(img, caption="Pasted screenshot", use_column_width=True)
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        image_bytes = buf.getvalue()
+        mime_type   = "image/png"
+    else:
+        st.markdown("— or upload a file —")
+        uploaded_img = render_file_uploader(
+            label="Upload error screenshot (PNG, JPG, WEBP)",
+            accept=["png", "jpg", "jpeg", "webp"],
+            key="copilot_screenshot",
+            help_text="Gemini Vision will extract the error text automatically.",
+        )
+        if uploaded_img:
+            image_bytes, mime_type = get_image_bytes(uploaded_img)
+            st.image(uploaded_img, caption="Uploaded screenshot", use_column_width=True)
 
 # ── Options ───────────────────────────────────────────────────────────────────
 opt_col1, opt_col2 = st.columns([3, 1])
