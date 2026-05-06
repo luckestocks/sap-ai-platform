@@ -1,6 +1,8 @@
 """
 pages/1_SAP_Migration_Error_Analyzer.py
 SAP Migration Co-pilot — AI error diagnostic with 4-level RAG hierarchy.
+Search order: L3 Global KB → L1 Project KB → L2 Client KB → L4 LLM
+Client/project selected at save time, not search time.
 """
 
 import streamlit as st
@@ -15,8 +17,9 @@ from utils.supabase_client import (
     get_projects,
     create_client_record,
     create_project_record,
-    rag_search,
     save_resolution,
+    get_supabase,
+    embed_text,
 )
 
 st.set_page_config(
@@ -32,41 +35,102 @@ st.markdown("# 🔧 SAP Migration Error Analyzer")
 st.markdown("Diagnose SAP load errors using AI + hierarchical project memory.")
 
 # ── RAG level badge helper ────────────────────────────────────────────────────
-_LEVEL_STYLE = {
-    1: ("🔵", "blue",   "Project KB — matched from this project's history"),
-    2: ("🟢", "green",  "Client KB — matched from another project for this client"),
-    3: ("🟡", "yellow", "Global KB — matched from anonymised cross-client history"),
-    4: ("⚪", "grey",   "LLM Fallback — no KB match found, AI generated fresh"),
-}
-
 def render_rag_badge(level: int):
-    icon, _, label = _LEVEL_STYLE[level]
-    colours = {1: "#1d6fa5", 2: "#1a7a4a", 3: "#8a6d00", 4: "#555"}
-    bg = {1: "#dbeeff", 2: "#d4f5e2", 3: "#fff8d6", 4: "#e8e8e8"}
+    config = {
+        1: ("🔵", "#dbeeff", "#1d6fa5", "Project KB match"),
+        2: ("🟢", "#d4f5e2", "#1a7a4a", "Client KB match"),
+        3: ("🟡", "#fff8d6", "#8a6d00", "Global KB match"),
+        4: ("⚪", "#e8e8e8", "#555555", "LLM — no KB match found"),
+    }
+    icon, bg, colour, label = config[level]
     st.markdown(
-        f'<span style="background:{bg[level]};color:{colours[level]};'
-        f'padding:4px 12px;border-radius:20px;font-size:0.82rem;font-weight:600;">'
+        f'<span style="background:{bg};color:{colour};padding:4px 12px;'
+        f'border-radius:20px;font-size:0.82rem;font-weight:600;">'
         f'{icon} {label}</span>',
         unsafe_allow_html=True,
     )
 
-# ── Project context ───────────────────────────────────────────────────────────
-with st.expander("📁 Project Context", expanded=True):
+
+# ── Global-first RAG search ───────────────────────────────────────────────────
+def global_first_rag(
+    query: str,
+    project_id: str = None,
+    client_id: str = None,
+    threshold: float = 0.70,
+    match_count: int = 3,
+) -> dict:
+    """
+    Search order:
+      L3 — Global KB (always, no auth needed)
+      L1 — Project KB (if project_id provided)
+      L2 — Client KB  (if client_id provided)
+      L4 — LLM fallback
+    Returns first level with hits.
+    """
+    supabase  = get_supabase()
+    embedding = embed_text(query)
+
+    # L3 first — cross-client anonymous KB
+    res = supabase.rpc(
+        "match_cross_client_kb",
+        {
+            "query_embedding": embedding,
+            "match_threshold": threshold,
+            "match_count": match_count,
+        },
+    ).execute()
+    if res.data:
+        return {"level": 3, "label": "Global KB", "results": res.data}
+
+    # L1 — project-specific (only if project selected)
+    if project_id:
+        res = supabase.rpc(
+            "match_project_errors",
+            {
+                "query_embedding": embedding,
+                "match_project_id": project_id,
+                "match_threshold": threshold,
+                "match_count": match_count,
+            },
+        ).execute()
+        if res.data:
+            return {"level": 1, "label": "Project KB", "results": res.data}
+
+    # L2 — client-wide (only if client + project selected)
+    if client_id and project_id:
+        res = supabase.rpc(
+            "match_client_errors",
+            {
+                "query_embedding": embedding,
+                "match_client_id": client_id,
+                "exclude_project_id": project_id,
+                "match_threshold": threshold,
+                "match_count": match_count,
+            },
+        ).execute()
+        if res.data:
+            return {"level": 2, "label": "Client KB", "results": res.data}
+
+    return {"level": 4, "label": "LLM Fallback", "results": []}
+
+
+# ── Optional context (collapsed — not needed for search) ─────────────────────
+with st.expander("📁 Project Context (optional — refines KB search, or set when saving)", expanded=False):
     ctx_col1, ctx_col2, ctx_col3 = st.columns(3)
 
     with ctx_col1:
-        clients = get_clients()
+        clients      = get_clients()
         client_names = [c["name"] for c in clients]
         client_ids   = {c["name"]: c["id"] for c in clients}
 
         selected_client = st.selectbox(
             "Client",
-            options=["— select —"] + client_names + ["➕ New client…"],
+            options=["— none —"] + client_names + ["➕ New client…"],
             index=0,
+            key="ctx_client",
         )
-
         if selected_client == "➕ New client…":
-            new_client_name = st.text_input("New client name")
+            new_client_name = st.text_input("New client name", key="new_client_name")
             if st.button("Create client") and new_client_name.strip():
                 new_id = create_client_record(new_client_name.strip())
                 if new_id:
@@ -74,7 +138,7 @@ with st.expander("📁 Project Context", expanded=True):
                     st.rerun()
             active_client_id   = None
             active_client_name = None
-        elif selected_client == "— select —":
+        elif selected_client == "— none —":
             active_client_id   = None
             active_client_name = None
         else:
@@ -87,19 +151,19 @@ with st.expander("📁 Project Context", expanded=True):
         active_project_name = None
 
         if active_client_id:
-            projects     = get_projects(active_client_id)
+            projects      = get_projects(active_client_id)
             project_names = [p["name"] for p in projects]
             project_ids   = {p["name"]: p["id"] for p in projects}
 
             selected_project = st.selectbox(
                 "Project",
-                options=["— select —"] + project_names + ["➕ New project…"],
+                options=["— none —"] + project_names + ["➕ New project…"],
                 index=0,
+                key="ctx_project",
             )
-
             if selected_project == "➕ New project…":
-                new_proj_name = st.text_input("New project name")
-                new_proj_desc = st.text_input("Description (optional)")
+                new_proj_name = st.text_input("New project name", key="new_proj_name")
+                new_proj_desc = st.text_input("Description (optional)", key="new_proj_desc")
                 if st.button("Create project") and new_proj_name.strip():
                     new_pid = create_project_record(
                         active_client_id, new_proj_name.strip(), new_proj_desc.strip()
@@ -107,7 +171,7 @@ with st.expander("📁 Project Context", expanded=True):
                     if new_pid:
                         st.success(f"Project '{new_proj_name}' created!")
                         st.rerun()
-            elif selected_project != "— select —":
+            elif selected_project != "— none —":
                 active_project_id   = project_ids[selected_project]
                 active_project_name = selected_project
                 st.session_state.active_project = active_project_name
@@ -117,8 +181,10 @@ with st.expander("📁 Project Context", expanded=True):
     with ctx_col3:
         load_phase = st.selectbox("Load Phase", ["DEV", "SIT", "UAT", "Cutover"])
 
-    if not active_client_id or not active_project_id:
-        st.warning("⚠️ Select a client and project to enable RAG knowledge base search.")
+    if active_client_id and active_project_id:
+        st.success(f"✅ Will also search **{active_client_name} / {active_project_name}** KB (L1 + L2)")
+    else:
+        st.info("ℹ️ Global KB (L3) always searched. Select client/project to also include L1 + L2 search.")
 
 st.divider()
 
@@ -156,7 +222,7 @@ with input_tab2:
 opt_col1, opt_col2 = st.columns([3, 1])
 with opt_col1:
     llm_only = st.checkbox(
-        "🔀 LLM-only mode — skip project history, go direct to AI",
+        "🔀 LLM-only mode — skip all KB search, go direct to AI",
         value=False,
     )
 with opt_col2:
@@ -203,21 +269,21 @@ if diagnose_btn:
             render_error_type_badge(error_type)
             st.markdown("")
 
-            # Step 3: RAG hierarchy search
-            rag_result   = {"level": 4, "label": "LLM Fallback", "results": []}
-            rag_context  = ""
-            source_level = "l4"
+            # Step 3: Global-first RAG search
+            rag_result    = {"level": 4, "label": "LLM Fallback", "results": []}
+            rag_context   = ""
+            source_level  = "l4"
             source_detail = ""
 
-            if not llm_only and active_client_id and active_project_id:
+            if not llm_only:
                 with st.spinner("🔍 Searching knowledge base..."):
-                    rag_result = rag_search(
+                    rag_result = global_first_rag(
                         query=error_text,
                         project_id=active_project_id,
                         client_id=active_client_id,
                     )
 
-                level = rag_result["level"]
+                level        = rag_result["level"]
                 source_level = f"l{level}"
 
                 st.markdown("**Knowledge Base:**")
@@ -226,7 +292,6 @@ if diagnose_btn:
 
                 if rag_result["results"]:
                     source_detail = f"L{level} — {rag_result['label']}"
-                    # Build context block for LLM
                     rag_lines = []
                     for i, r in enumerate(rag_result["results"], 1):
                         rag_lines.append(
@@ -239,7 +304,8 @@ if diagnose_btn:
                     rag_context = "\n\n".join(rag_lines)
 
                     with st.expander(
-                        f"📚 {len(rag_result['results'])} similar past resolution(s) found", expanded=False
+                        f"📚 {len(rag_result['results'])} similar past resolution(s) found",
+                        expanded=False,
                     ):
                         for r in rag_result["results"]:
                             st.markdown(
@@ -250,10 +316,7 @@ if diagnose_btn:
                             st.caption(r["fix_steps"] or "")
                             st.markdown("---")
             else:
-                if llm_only:
-                    st.caption("🔀 LLM-only mode — KB search skipped")
-                else:
-                    st.caption("⚠️ No client/project selected — routing to LLM (L4)")
+                st.caption("🔀 LLM-only mode — KB search skipped")
                 render_rag_badge(4)
                 st.markdown("")
 
@@ -266,13 +329,11 @@ if diagnose_btn:
                 "(3) confidence level (HIGH/MEDIUM/LOW). "
                 "Be specific and practical."
             )
-
             kb_section = (
                 f"\n\nRELEVANT PAST RESOLUTIONS FROM KNOWLEDGE BASE:\n{rag_context}\n"
                 f"Use these as primary reference if applicable.\n"
                 if rag_context else ""
             )
-
             diagnosis_prompt = (
                 f"Error Type: {error_type}\n"
                 f"Load Phase: {load_phase}\n"
@@ -302,25 +363,62 @@ if diagnose_btn:
                 provider_used=provider,
             )
 
-            # Store in session for resolution logging
-            st.session_state["last_error_text"]  = error_text
-            st.session_state["last_error_type"]  = error_type
-            st.session_state["last_diagnosis"]   = response
-            st.session_state["last_load_phase"]  = load_phase
-            st.session_state["last_client_id"]   = active_client_id
-            st.session_state["last_project_id"]  = active_project_id
+            # Persist to session for the save form below
+            st.session_state["last_error_text"] = error_text
+            st.session_state["last_error_type"] = error_type
+            st.session_state["last_diagnosis"]  = response
+            st.session_state["last_load_phase"] = load_phase
 
-# ── Resolution logging (outside spinner — persists after analysis) ─────────────
+
+# ── Save Resolution — always visible after an analysis ───────────────────────
 if st.session_state.get("last_error_text"):
     st.divider()
-    st.markdown("### ✅ Log Resolution")
-    st.caption("Confirm the fix applied — saves to your project knowledge base for future RAG search.")
+    st.markdown("### ✅ Save Resolution")
+    st.caption("Tag this resolution to a client & project, then save it to the knowledge base.")
 
     with st.form("log_resolution"):
+        save_col1, save_col2, save_col3 = st.columns(3)
+
+        with save_col1:
+            save_clients      = get_clients()
+            save_client_names = [c["name"] for c in save_clients]
+            save_client_ids   = {c["name"]: c["id"] for c in save_clients}
+            save_client_sel   = st.selectbox(
+                "Tag to Client *",
+                options=["— select —"] + save_client_names,
+                key="save_client",
+            )
+            save_client_id = save_client_ids.get(save_client_sel)
+
+        with save_col2:
+            if save_client_id:
+                save_projects      = get_projects(save_client_id)
+                save_project_names = [p["name"] for p in save_projects]
+                save_project_ids   = {p["name"]: p["id"] for p in save_projects}
+                save_project_sel   = st.selectbox(
+                    "Tag to Project *",
+                    options=["— select —"] + save_project_names,
+                    key="save_project",
+                )
+                save_project_id = save_project_ids.get(save_project_sel)
+            else:
+                st.selectbox("Tag to Project *", options=["— select client first —"], disabled=True, key="save_project_disabled")
+                save_project_id = None
+
+        with save_col3:
+            phases     = ["DEV", "SIT", "UAT", "Cutover"]
+            last_phase = st.session_state.get("last_load_phase", "DEV")
+            save_phase = st.selectbox(
+                "Load Phase",
+                phases,
+                index=phases.index(last_phase) if last_phase in phases else 0,
+                key="save_phase",
+            )
+
         actual_fix = st.text_area(
-            "Actual fix applied",
+            "Actual fix applied *",
             height=100,
-            placeholder="Describe what you did to resolve this...",
+            placeholder="Describe exactly what you did to resolve this error...",
         )
         t_codes_input = st.text_input(
             "T-codes used (comma separated)",
@@ -329,34 +427,36 @@ if st.session_state.get("last_error_text"):
         time_taken = st.number_input(
             "Time to resolve (minutes)", min_value=1, max_value=480, value=30
         )
+
         log_btn = st.form_submit_button("💾 Save to Knowledge Base", type="primary")
 
     if log_btn:
         if not actual_fix.strip():
             st.warning("Please describe the fix before saving.")
-        elif not st.session_state.get("last_client_id") or not st.session_state.get("last_project_id"):
-            st.error("No client/project selected — cannot save to KB.")
+        elif not save_client_id:
+            st.warning("Please select a client to tag this resolution.")
+        elif not save_project_id:
+            st.warning("Please select a project to tag this resolution.")
         else:
             t_codes = [t.strip().upper() for t in t_codes_input.split(",") if t.strip()]
             with st.spinner("Saving to knowledge base..."):
                 result = save_resolution(
-                    client_id=st.session_state["last_client_id"],
-                    project_id=st.session_state["last_project_id"],
+                    client_id=save_client_id,
+                    project_id=save_project_id,
                     error_message=st.session_state["last_error_text"],
                     root_cause=st.session_state["last_diagnosis"],
                     fix_steps=actual_fix,
                     error_type=st.session_state.get("last_error_type", ""),
                     t_codes=t_codes,
-                    load_phase=st.session_state.get("last_load_phase", ""),
+                    load_phase=save_phase,
                     time_to_resolve=int(time_taken),
                     created_by="Sparky",
                 )
             if result["status"] == "saved":
                 st.success(
-                    f"✅ Resolution saved to Project KB (L1) and promoted to Global KB (L3)!\n\n"
+                    f"✅ Saved to Project KB (L1) and promoted to Global KB (L3)!\n\n"
                     f"Resolution ID: `{result['resolution_id']}`"
                 )
-                # Clear so form doesn't re-show stale state
                 st.session_state.pop("last_error_text", None)
             else:
                 st.error("❌ Failed to save. Check Supabase connection.")
