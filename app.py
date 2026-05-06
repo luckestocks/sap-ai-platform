@@ -1,3 +1,13 @@
+from utils.supabase_client import check_connection
+
+st.sidebar.markdown("---")
+conn = check_connection()
+if conn["connected"]:
+    st.sidebar.success(f"✅ Supabase connected\n{conn['client_count']} clients | {conn['resolution_count']} resolutions")
+else:
+    st.sidebar.error(f"❌ Supabase error: {conn.get('error')}")
+
+
 """
 app.py
 SAP AI Platform — Main Entry Point & Home Page
