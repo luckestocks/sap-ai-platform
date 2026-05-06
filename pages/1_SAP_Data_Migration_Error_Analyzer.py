@@ -346,28 +346,12 @@ if diagnose_btn:
             response, provider = query_llm(diagnosis_prompt, system_prompt)
 
             # Step 5: Parse confidence
-            confidence = "medium"
-            resp_upper = response.upper()
-            if "CONFIDENCE: HIGH" in resp_upper or "HIGH CONFIDENCE" in resp_upper:
-                confidence = "high"
-            elif "CONFIDENCE: LOW" in resp_upper or "LOW CONFIDENCE" in resp_upper:
-                confidence = "low"
-
-            # Step 6: Render result
-            st.markdown("### Diagnosis")
-            render_response_card(
-                response_text=response,
-                confidence=confidence,
-                source_level=source_level,
-                source_detail=source_detail,
-                provider_used=provider,
-            )
-
-            # Persist to session for the save form below
-            st.session_state["last_error_text"] = error_text
-            st.session_state["last_error_type"] = error_type
-            st.session_state["last_diagnosis"]  = response
-            st.session_state["last_load_phase"] = load_phase
+confidence = "medium"
+resp_upper = response.upper()
+if any(p in resp_upper for p in ["CONFIDENCE: HIGH", "CONFIDENCE LEVEL: HIGH", "HIGH CONFIDENCE", "LEVEL: HIGH"]):
+    confidence = "high"
+elif any(p in resp_upper for p in ["CONFIDENCE: LOW", "CONFIDENCE LEVEL: LOW", "LOW CONFIDENCE", "LEVEL: LOW"]):
+    confidence = "low"
 
 
 # ── Save Resolution — always visible after an analysis ───────────────────────
