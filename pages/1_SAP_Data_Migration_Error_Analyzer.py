@@ -446,70 +446,70 @@ if st.session_state.get("last_diagnosis"):
         st.session_state["chat_history"].append({"role": "assistant", "content": followup_response})
 
 
-# ── Save Resolution — always visible after an analysis ───────────────────────
+# ── Save Resolution — collapsible ────────────────────────────────────────────
 if st.session_state.get("last_error_text"):
     st.divider()
-    st.markdown("### ✅ Save Resolution")
-    st.caption("Tag this resolution to a client & project, then save it to the knowledge base.")
+    with st.expander("✅ Save Resolution", expanded=False):
+        st.caption("Tag this resolution to a client & project, then save it to the knowledge base.")
 
-    with st.form("log_resolution"):
-        save_col1, save_col2, save_col3 = st.columns(3)
+        with st.form("log_resolution"):
+            save_col1, save_col2, save_col3 = st.columns(3)
 
-        with save_col1:
-            save_clients      = get_clients()
-            save_client_names = [c["name"] for c in save_clients]
-            save_client_ids   = {c["name"]: c["id"] for c in save_clients}
-            save_client_sel   = st.selectbox(
-                "Tag to Client *",
-                options=["— select —"] + save_client_names,
-                key="save_client",
-            )
-            save_client_id = save_client_ids.get(save_client_sel)
-
-        with save_col2:
-            if save_client_id:
-                save_projects      = get_projects(save_client_id)
-                save_project_names = [p["name"] for p in save_projects]
-                save_project_ids   = {p["name"]: p["id"] for p in save_projects}
-                save_project_sel   = st.selectbox(
-                    "Tag to Project *",
-                    options=["— select —"] + save_project_names,
-                    key="save_project",
+            with save_col1:
+                save_clients      = get_clients()
+                save_client_names = [c["name"] for c in save_clients]
+                save_client_ids   = {c["name"]: c["id"] for c in save_clients}
+                save_client_sel   = st.selectbox(
+                    "Tag to Client *",
+                    options=["— select —"] + save_client_names,
+                    key="save_client",
                 )
-                save_project_id = save_project_ids.get(save_project_sel)
-            else:
-                st.selectbox(
-                    "Tag to Project *",
-                    options=["— select client first —"],
-                    disabled=True,
-                    key="save_project_disabled",
-                )
-                save_project_id = None
+                save_client_id = save_client_ids.get(save_client_sel)
 
-        with save_col3:
-            phases     = ["DEV", "SIT", "UAT", "Cutover"]
-            last_phase = st.session_state.get("last_load_phase", "DEV")
-            save_phase = st.selectbox(
-                "Load Phase",
-                phases,
-                index=phases.index(last_phase) if last_phase in phases else 0,
-                key="save_phase",
+            with save_col2:
+                if save_client_id:
+                    save_projects      = get_projects(save_client_id)
+                    save_project_names = [p["name"] for p in save_projects]
+                    save_project_ids   = {p["name"]: p["id"] for p in save_projects}
+                    save_project_sel   = st.selectbox(
+                        "Tag to Project *",
+                        options=["— select —"] + save_project_names,
+                        key="save_project",
+                    )
+                    save_project_id = save_project_ids.get(save_project_sel)
+                else:
+                    st.selectbox(
+                        "Tag to Project *",
+                        options=["— select client first —"],
+                        disabled=True,
+                        key="save_project_disabled",
+                    )
+                    save_project_id = None
+
+            with save_col3:
+                phases     = ["DEV", "SIT", "UAT", "Cutover"]
+                last_phase = st.session_state.get("last_load_phase", "DEV")
+                save_phase = st.selectbox(
+                    "Load Phase",
+                    phases,
+                    index=phases.index(last_phase) if last_phase in phases else 0,
+                    key="save_phase",
+                )
+
+            actual_fix = st.text_area(
+                "Actual fix applied *",
+                height=100,
+                placeholder="Describe exactly what you did to resolve this error...",
+            )
+            t_codes_input = st.text_input(
+                "T-codes used (comma separated)",
+                placeholder="e.g. WE20, BD54, WE19",
+            )
+            time_taken = st.number_input(
+                "Time to resolve (minutes)", min_value=1, max_value=480, value=30
             )
 
-        actual_fix = st.text_area(
-            "Actual fix applied *",
-            height=100,
-            placeholder="Describe exactly what you did to resolve this error...",
-        )
-        t_codes_input = st.text_input(
-            "T-codes used (comma separated)",
-            placeholder="e.g. WE20, BD54, WE19",
-        )
-        time_taken = st.number_input(
-            "Time to resolve (minutes)", min_value=1, max_value=480, value=30
-        )
-
-        log_btn = st.form_submit_button("💾 Save to Knowledge Base", type="primary")
+            log_btn = st.form_submit_button("💾 Save to Knowledge Base", type="primary")
 
     if log_btn:
         if not actual_fix.strip():
