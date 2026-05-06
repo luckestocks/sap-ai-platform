@@ -32,7 +32,7 @@ with open("components/styles.css") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 st.markdown("# 🔧 SAP Data Migration Error Analyzer")
-st.markdown("Diagnose SAP Data Migration load errors using AI + hierarchical project memory.")
+st.markdown("Diagnose SAP Data errors using AI + hierarchical project memory.")
 
 # ── RAG level badge helper ────────────────────────────────────────────────────
 def render_rag_badge(level: int):
@@ -381,11 +381,61 @@ if diagnose_btn:
                 provider_used=provider,
             )
 
-            # Persist to session for the save form below
+            # Persist to session for the save form and follow-up chat
             st.session_state["last_error_text"] = error_text
             st.session_state["last_error_type"] = error_type
             st.session_state["last_diagnosis"]  = response
             st.session_state["last_load_phase"] = load_phase
+            st.session_state["chat_history"]    = []  # reset on new analysis
+
+
+# ── Follow-up Chat ────────────────────────────────────────────────────────────
+if st.session_state.get("last_diagnosis"):
+    st.divider()
+    st.markdown("### 💬 Follow-up Questions")
+    st.caption("Ask anything based on the diagnosis above — clarifications, alternative fixes, T-code steps, etc.")
+
+    if "chat_history" not in st.session_state:
+        st.session_state["chat_history"] = []
+
+    # Render existing chat messages
+    for msg in st.session_state["chat_history"]:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # Follow-up input
+    followup = st.chat_input("Ask a follow-up question about this error...")
+
+    if followup:
+        st.session_state["chat_history"].append({"role": "user", "content": followup})
+        with st.chat_message("user"):
+            st.markdown(followup)
+
+        history_text = "\n".join(
+            f"{'User' if m['role'] == 'user' else 'Assistant'}: {m['content']}"
+            for m in st.session_state["chat_history"][:-1]
+        )
+
+        followup_system = (
+            "You are an expert SAP data migration consultant. "
+            "You have already diagnosed an error for the user. "
+            "Answer their follow-up question concisely and practically, "
+            "referencing the original diagnosis where relevant. "
+            "Include T-codes and specific steps where applicable."
+        )
+        followup_prompt = (
+            f"ORIGINAL ERROR:\n{st.session_state['last_error_text']}\n\n"
+            f"YOUR PREVIOUS DIAGNOSIS:\n{st.session_state['last_diagnosis']}\n\n"
+            + (f"CONVERSATION SO FAR:\n{history_text}\n\n" if history_text else "")
+            + f"USER FOLLOW-UP QUESTION:\n{followup}"
+        )
+
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                followup_response, _ = query_llm(followup_prompt, followup_system)
+            st.markdown(followup_response)
+
+        st.session_state["chat_history"].append({"role": "assistant", "content": followup_response})
 
 
 # ── Save Resolution — always visible after an analysis ───────────────────────
