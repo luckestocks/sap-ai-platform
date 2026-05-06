@@ -337,19 +337,21 @@ if diagnose_btn:
             )
             response, provider = query_llm(diagnosis_prompt, system_prompt)
 
-            # Step 5: Parse confidence (fixed — catches all LLM phrasings)
-            confidence = "medium"
-            resp_upper = response.upper()
-            if any(p in resp_upper for p in [
+           # Step 5: Parse confidence (robust — handles markdown bold and all phrasings)
+                confidence = "medium"
+                resp_upper = response.upper()
+                # Strip markdown bold markers before checking
+                resp_clean = resp_upper.replace("**", "").replace("*", "")
+                if any(p in resp_clean for p in [
                 "CONFIDENCE: HIGH", "CONFIDENCE LEVEL: HIGH",
-                "HIGH CONFIDENCE", "LEVEL: HIGH"
-            ]):
+                "HIGH CONFIDENCE", "CONFIDENCE HIGH"
+         ]):
                 confidence = "high"
-            elif any(p in resp_upper for p in [
+                elif any(p in resp_clean for p in [
                 "CONFIDENCE: LOW", "CONFIDENCE LEVEL: LOW",
-                "LOW CONFIDENCE", "LEVEL: LOW"
-            ]):
-                confidence = "low"
+                "LOW CONFIDENCE", "CONFIDENCE LOW"
+        ]):
+    confidence = "low"
 
             # Step 6: Render result
             st.markdown("### Diagnosis")
