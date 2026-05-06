@@ -381,12 +381,45 @@ if diagnose_btn:
             st.session_state["last_source_level"]  = source_level
             st.session_state["last_source_detail"] = source_detail
             st.session_state["last_provider"]      = provider
+            st.session_state["last_rag_results"]   = rag_result.get("results", [])
+            st.session_state["last_rag_level"]     = rag_result.get("level", 4)
+            st.session_state["last_rag_label"]     = rag_result.get("label", "LLM Fallback")
             st.session_state["chat_history"]       = []  # reset on new analysis
             st.rerun()
 
 
 # ── Persistent Diagnosis ──────────────────────────────────────────────────────
 if st.session_state.get("last_diagnosis"):
+
+    # Re-render error type badge
+    if st.session_state.get("last_error_type"):
+        st.markdown("**Detected Error Type:**")
+        render_error_type_badge(st.session_state["last_error_type"])
+        st.markdown("")
+
+    # Re-render RAG badge
+    rag_level = st.session_state.get("last_rag_level", 4)
+    st.markdown("**Knowledge Base:**")
+    render_rag_badge(rag_level)
+    st.markdown("")
+
+    # Re-render KB matches expander if any
+    rag_results = st.session_state.get("last_rag_results", [])
+    rag_label   = st.session_state.get("last_rag_label", "LLM Fallback")
+    if rag_results:
+        with st.expander(
+            f"📚 {len(rag_results)} similar past resolution(s) found — {rag_label}",
+            expanded=False,
+        ):
+            for r in rag_results:
+                st.markdown(
+                    f"**{r.get('error_code') or 'Error'}** — "
+                    f"similarity {r['similarity']:.0%} | "
+                    f"phase: {r.get('load_phase') or '—'}"
+                )
+                st.caption(r.get("fix_steps") or "")
+                st.markdown("---")
+
     st.markdown("### Diagnosis")
     render_response_card(
         response_text=st.session_state["last_diagnosis"],
