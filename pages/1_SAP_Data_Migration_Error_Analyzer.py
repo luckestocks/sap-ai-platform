@@ -23,7 +23,7 @@ from utils.supabase_client import (
 )
 
 st.set_page_config(
-    page_title="SAP Data Migration Error Analyzer | SAP AI Platform",
+    page_title="SAP Migration Error Analyzer | SAP AI Platform",
     page_icon="🔧",
     layout="wide",
 )
@@ -31,8 +31,8 @@ st.set_page_config(
 with open("components/styles.css") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-st.markdown("# 🔧 SAP Data Migration Error Analyzer")
-st.markdown("Diagnose SAP Data errors using AI + hierarchical project memory.")
+st.markdown("# 🔧 SAP Migration Error Analyzer")
+st.markdown("Diagnose SAP load errors using AI + hierarchical project memory.")
 
 # ── RAG level badge helper ────────────────────────────────────────────────────
 def render_rag_badge(level: int):
@@ -371,22 +371,30 @@ if diagnose_btn:
             ]):
                 confidence = "low"
 
-            # Step 6: Render result
-            st.markdown("### Diagnosis")
-            render_response_card(
-                response_text=response,
-                confidence=confidence,
-                source_level=source_level,
-                source_detail=source_detail,
-                provider_used=provider,
-            )
+            # Step 6: store — rendered persistently below outside this block
+            # Persist everything to session — diagnosis renders below
+            st.session_state["last_error_text"]    = error_text
+            st.session_state["last_error_type"]    = error_type
+            st.session_state["last_diagnosis"]     = response
+            st.session_state["last_load_phase"]    = load_phase
+            st.session_state["last_confidence"]    = confidence
+            st.session_state["last_source_level"]  = source_level
+            st.session_state["last_source_detail"] = source_detail
+            st.session_state["last_provider"]      = provider
+            st.session_state["chat_history"]       = []  # reset on new analysis
+            st.rerun()
 
-            # Persist to session for the save form and follow-up chat
-            st.session_state["last_error_text"] = error_text
-            st.session_state["last_error_type"] = error_type
-            st.session_state["last_diagnosis"]  = response
-            st.session_state["last_load_phase"] = load_phase
-            st.session_state["chat_history"]    = []  # reset on new analysis
+
+# ── Persistent Diagnosis ──────────────────────────────────────────────────────
+if st.session_state.get("last_diagnosis"):
+    st.markdown("### Diagnosis")
+    render_response_card(
+        response_text=st.session_state["last_diagnosis"],
+        confidence=st.session_state.get("last_confidence", "medium"),
+        source_level=st.session_state.get("last_source_level", "l4"),
+        source_detail=st.session_state.get("last_source_detail", ""),
+        provider_used=st.session_state.get("last_provider", ""),
+    )
 
 
 # ── Follow-up Chat ────────────────────────────────────────────────────────────
