@@ -230,6 +230,46 @@ with input_tab2:
             image_bytes, mime_type = get_image_bytes(uploaded_img)
             st.image(uploaded_img, caption="Uploaded screenshot", use_column_width=True)
 
+# ── Groq usage tracker ───────────────────────────────────────────────────────
+from datetime import datetime, timezone
+
+# Initialise daily counter (resets at midnight UTC)
+today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+if st.session_state.get("groq_date") != today_utc:
+    st.session_state["groq_date"]     = today_utc
+    st.session_state["groq_calls"]    = 0
+
+groq_calls  = st.session_state.get("groq_calls", 0)
+groq_analyses = groq_calls // 2          # 2 calls per analysis
+groq_remaining = max(0, 500 - groq_analyses)
+
+# IST reset time (midnight UTC = 5:30 AM IST)
+reset_ist = "5:30 AM IST"
+
+# Colour based on remaining
+if groq_remaining > 200:
+    groq_colour = "#2ecc71"   # green
+elif groq_remaining > 50:
+    groq_colour = "#f39c12"   # amber
+else:
+    groq_colour = "#e74c3c"   # red
+
+provider_now = st.session_state.get("llm_provider", "groq")
+if provider_now == "groq":
+    st.markdown(
+        f'<div style="background:#1a1a2e;border:1px solid {groq_colour};border-radius:8px;'
+        f'padding:8px 16px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;">'
+        f'<span style="color:{groq_colour};font-size:0.85rem;font-weight:600;">'
+        f'⚡ Groq today: {groq_analyses} analyses used &nbsp;|&nbsp; ~{groq_remaining} remaining</span>'
+        f'<span style="color:#888;font-size:0.78rem;">Resets at {reset_ist} · 1,000 req/day limit</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    if groq_remaining == 0:
+        st.error("🚫 Daily Groq limit reached. Switch to Claude in the Admin Panel or wait until 5:30 AM IST.")
+    elif groq_remaining <= 50:
+        st.warning(f"⚠️ Only ~{groq_remaining} analyses left on Groq today. Consider switching to Claude.")
+
 # ── Options ───────────────────────────────────────────────────────────────────
 opt_col1, opt_col2 = st.columns([3, 1])
 with opt_col1:
@@ -275,6 +315,7 @@ if diagnose_btn:
                 f"Return ONLY the category name, nothing else."
             )
             error_type_raw, _ = query_llm(classify_prompt)
+            st.session_state["groq_calls"] = st.session_state.get("groq_calls", 0) + 1
             error_type = error_type_raw.strip().split()[0]
 
             st.markdown("**Detected Error Type:**")
@@ -356,6 +397,8 @@ if diagnose_btn:
                 f"Diagnose this error. Include root cause, fix steps, T-codes, and confidence level."
             )
             response, provider = query_llm(diagnosis_prompt, system_prompt)
+            if provider == "groq":
+                st.session_state["groq_calls"] = st.session_state.get("groq_calls", 0) + 1
 
             # Step 5: Parse confidence (robust — strips markdown bold before checking)
             confidence = "medium"
