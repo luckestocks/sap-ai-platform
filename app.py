@@ -1,20 +1,10 @@
-from utils.supabase_client import check_connection
-
-st.sidebar.markdown("---")
-conn = check_connection()
-if conn["connected"]:
-    st.sidebar.success(f"✅ Supabase connected\n{conn['client_count']} clients | {conn['resolution_count']} resolutions")
-else:
-    st.sidebar.error(f"❌ Supabase error: {conn.get('error')}")
-
-
 """
 app.py
 SAP AI Platform — Main Entry Point & Home Page
 """
 
 import streamlit as st
-from utils.supabase_client import init_supabase
+from utils.supabase_client import check_connection
 
 st.set_page_config(
     page_title="SAP AI Platform",
@@ -35,7 +25,7 @@ if "active_project" not in st.session_state:
 
 with st.sidebar:
     st.markdown("## ⚡ SAP AI Platform")
-    st.caption("v2.0 — Phase 0")
+    st.caption("v2.0 — Phase 1")
     st.divider()
 
     provider_labels = {
@@ -60,6 +50,15 @@ with st.sidebar:
     st.page_link("pages/4_Admin_Panel.py",
                  label="⚙️ Admin Panel")
     st.divider()
+
+    # ── Supabase connection status ──────────────────────────────
+    st.markdown("---")
+    conn = check_connection()
+    if conn["connected"]:
+        st.success(f"✅ Supabase connected\n\n{conn['client_count']} clients | {conn['resolution_count']} resolutions")
+    else:
+        st.error(f"❌ Supabase error: {conn.get('error')}")
+
     st.caption("Built by Sparky — SAP Migration Lead")
 
 st.markdown("""
@@ -115,12 +114,7 @@ sc1, sc2, sc3, sc4 = st.columns(4)
 with sc1:
     st.metric("LLM Provider", provider_labels[st.session_state.llm_provider])
 with sc2:
-    try:
-        db = init_supabase()
-        db_status = "🟢 Connected" if db else "🟡 Not configured"
-    except Exception:
-        db_status = "🔴 Error"
-    st.metric("Database", db_status)
+    st.metric("Database", "🟢 Connected" if conn["connected"] else "🔴 Error")
 with sc3:
     st.metric("Active Client", st.session_state.active_client or "Not set")
 with sc4:
