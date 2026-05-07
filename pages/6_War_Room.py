@@ -230,12 +230,15 @@ def render_issue_card(issue: dict, your_name: str):
         unsafe_allow_html=True,
     )
 
-    # Action buttons — Resolved issues have no actions
+    # Action buttons — Resolved issues have no actions except viewing screenshot
     if status == "Resolved":
-        # st.empty() acts as an invisible widget anchor — stops Streamlit from
-        # dimming the markdown card above it (Streamlit dims HTML-only blocks
-        # with no widget following them in the same column render tree)
-        st.empty()
+        if screenshot_data:
+            if st.button("📎 Screenshot", key=f"shot_{iid}", use_container_width=False):
+                st.session_state["view_screenshot_data"]  = screenshot_data
+                st.session_state["view_screenshot_title"] = issue["title"]
+                st.rerun()
+        else:
+            st.empty()
         return
 
     if screenshot_data:
