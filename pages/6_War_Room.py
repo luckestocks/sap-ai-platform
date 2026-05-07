@@ -521,6 +521,9 @@ resolve_id    = st.session_state.get("resolve_panel_id")
 resolve_title = st.session_state.get("resolve_panel_title", "")
 
 if resolve_id:
+    # Fetch the full issue so we have description + screenshot for KB extraction
+    resolve_issue = next((i for i in all_issues if i["id"] == resolve_id), None)
+
     st.markdown(
         f'<div style="background:#0d2218;border:2px solid #4ade80;border-radius:10px;'
         f'padding:12px 16px;margin-bottom:16px;">'
@@ -535,6 +538,16 @@ if resolve_id:
             height=90,
             placeholder="Describe exactly what was done to fix this...",
         )
+
+        push_to_kb = st.checkbox(
+            "🧠 Also save to Error Analyzer Knowledge Base",
+            value=False,
+            help=(
+                "Extracts the canonical SAP error from the screenshot or description "
+                "using AI, then saves it to the KB so it surfaces in Page 1 searches."
+            ),
+        )
+
         rc1, rc2 = st.columns([1, 3])
         with rc1:
             cancel = st.form_submit_button("✖ Cancel")
@@ -545,16 +558,93 @@ if resolve_id:
             st.session_state.pop("resolve_panel_id", None)
             st.session_state.pop("resolve_panel_title", None)
             st.rerun()
+
         if save:
             if not notes.strip():
                 st.warning("Please add resolution notes before closing.")
             else:
+                # Step 1: Close the issue
                 update_issue(resolve_id, {
                     "status":           "Resolved",
                     "resolved_by":      your_name,
                     "resolved_at":      now_utc(),
                     "resolution_notes": notes.strip(),
                 })
+
+                # Step 2: Push to KB if requested
+                if push_to_kb and resolve_issue:
+                    with st.spinner("🧠 Extracting error and saving to Knowledge Base..."):
+                        try:
+                            from utils.llm_router import query_llm, query_llm_vision
+                            from utils.supabase_client import save_resolution
+
+                            raw_desc = resolve_issue.get("description") or ""
+                            screenshot_data = None
+                            display_desc    = raw_desc
+
+                            # Extract screenshot if present
+                            if "[SCREENSHOT:" in raw_desc:
+                                parts        = raw_desc.split("[SCREENSHOT:", 1)
+                                display_desc = parts[0].strip()
+                                try:
+                                    screenshot_data = parts[1].rstrip("]")
+                                except Exception:
+                                    screenshot_data = None
+
+                            # Extract canonical SAP error text
+                            if screenshot_data:
+                                # Vision path — extract from screenshot
+                                import base64
+                                img_data = screenshot_data.split(",", 1)[1] if "," in screenshot_data else screenshot_data
+                                img_bytes = base64.b64decode(img_data)
+                                vision_prompt = (
+                                    "You are an SAP expert. Extract the exact SAP error message, "
+                                    "error codes, and status codes from this screenshot. "
+                                    "Return only the raw error text as it appears in SAP — "
+                                    "no explanations, no formatting, just the error lines."
+                                )
+                                canonical_error, _ = query_llm_vision(
+                                    prompt=vision_prompt,
+                                    image_bytes=img_bytes,
+                                    media_type="image/png",
+                                )
+                            else:
+                                # Text path — normalise free-text description to canonical SAP error
+                                normalise_prompt = (
+                                    f"You are an SAP expert. Based on this issue title and description, "
+                                    f"reconstruct the canonical SAP error message as it would appear in "
+                                    f"the SAP system (error codes, status codes, transaction references). "
+                                    f"Return only the error text — no explanations.\n\n"
+                                    f"Issue Type: {resolve_issue.get('issue_type', '')}\n"
+                                    f"Title: {resolve_issue.get('title', '')}\n"
+                                    f"Description: {display_desc or 'No description provided'}"
+                                )
+                                canonical_error, _ = query_llm(normalise_prompt)
+
+                            # Save to KB
+                            kb_result = save_resolution(
+                                client_id   = resolve_issue.get("client_id") or "00000000-0000-0000-0000-000000000000",
+                                project_id  = resolve_issue.get("project_id") or "00000000-0000-0000-0000-000000000000",
+                                error_message = canonical_error.strip(),
+                                root_cause  = (
+                                    f"War Room issue: {resolve_issue.get('title', '')}\n"
+                                    f"Stream: {resolve_issue.get('stream', '')}\n"
+                                    f"Priority: {resolve_issue.get('priority', '')}"
+                                ),
+                                fix_steps   = notes.strip(),
+                                error_type  = resolve_issue.get("issue_type", ""),
+                                t_codes     = [],
+                                load_phase  = resolve_issue.get("cutover_phase", "Cutover"),
+                                time_to_resolve = None,
+                                created_by  = your_name,
+                            )
+                            if kb_result.get("status") == "saved":
+                                st.success("✅ Saved to Error Analyzer KB!")
+                            else:
+                                st.warning("⚠️ Issue closed but KB save failed — check Supabase connection.")
+                        except Exception as e:
+                            st.warning(f"⚠️ Issue closed but KB push failed: {e}")
+
                 st.session_state.pop("resolve_panel_id", None)
                 st.session_state.pop("resolve_panel_title", None)
                 st.rerun()
