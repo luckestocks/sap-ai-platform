@@ -213,7 +213,8 @@ def render_issue_card(issue: dict, your_name: str):
     elif status == "In Progress":
         with btn_col1:
             if st.button("✅ Resolve", key=f"resolve_{iid}", use_container_width=True):
-                st.session_state[f"resolving_{iid}"] = True
+                st.session_state["resolve_panel_id"] = iid
+                st.session_state["resolve_panel_title"] = issue["title"]
         with btn_col2:
             if st.button("🚫 Block", key=f"block2_{iid}", use_container_width=True):
                 update_issue(iid, {"status": "Blocked"})
@@ -232,29 +233,6 @@ def render_issue_card(issue: dict, your_name: str):
                     "claimed_at": now_utc(),
                 })
                 st.rerun()
-
-    # Resolve form — inline
-    # Clear the flag immediately if the issue is already resolved (survives rerun)
-    if status == "Resolved":
-        st.session_state.pop(f"resolving_{iid}", None)
-
-    if st.session_state.get(f"resolving_{iid}"):
-        with st.form(key=f"resolve_form_{iid}"):
-            notes = st.text_area("Resolution notes *", height=80,
-                                 placeholder="Describe exactly what was done to fix this...")
-            sub = st.form_submit_button("💾 Save & Close Issue", type="primary")
-            if sub:
-                if not notes.strip():
-                    st.warning("Please add resolution notes before closing.")
-                else:
-                    update_issue(iid, {
-                        "status":           "Resolved",
-                        "resolved_by":      your_name,
-                        "resolved_at":      now_utc(),
-                        "resolution_notes": notes.strip(),
-                    })
-                    st.session_state.pop(f"resolving_{iid}", None)
-                    st.rerun()
 
 
 # ── Page header ───────────────────────────────────────────────────────────────
@@ -398,6 +376,49 @@ def apply_filters(issues: list) -> list:
     if filter_stream:
         issues = [i for i in issues if i["stream"] in filter_stream]
     return issues
+
+# ── Resolve panel — full width, above board, only shown when active ───────────
+resolve_id    = st.session_state.get("resolve_panel_id")
+resolve_title = st.session_state.get("resolve_panel_title", "")
+
+if resolve_id:
+    st.markdown(
+        f'<div style="background:#0d2218;border:2px solid #4ade80;border-radius:10px;'
+        f'padding:12px 16px;margin-bottom:16px;">'
+        f'<span style="color:#4ade80;font-weight:700;font-size:0.90rem;">✅ Resolving: </span>'
+        f'<span style="color:#e2e8f0;font-size:0.88rem;">{resolve_title}</span>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+    with st.form("resolve_panel_form"):
+        notes = st.text_area(
+            "Resolution notes *",
+            height=90,
+            placeholder="Describe exactly what was done to fix this...",
+        )
+        rc1, rc2 = st.columns([1, 3])
+        with rc1:
+            cancel = st.form_submit_button("✖ Cancel")
+        with rc2:
+            save = st.form_submit_button("💾 Save & Close Issue", type="primary")
+
+        if cancel:
+            st.session_state.pop("resolve_panel_id", None)
+            st.session_state.pop("resolve_panel_title", None)
+            st.rerun()
+        if save:
+            if not notes.strip():
+                st.warning("Please add resolution notes before closing.")
+            else:
+                update_issue(resolve_id, {
+                    "status":           "Resolved",
+                    "resolved_by":      your_name,
+                    "resolved_at":      now_utc(),
+                    "resolution_notes": notes.strip(),
+                })
+                st.session_state.pop("resolve_panel_id", None)
+                st.session_state.pop("resolve_panel_title", None)
+                st.rerun()
 
 # ── Kanban board ──────────────────────────────────────────────────────────────
 # Sort: P1 first, then P2, then P3; within priority by raised_at
