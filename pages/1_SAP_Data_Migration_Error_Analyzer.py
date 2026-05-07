@@ -19,6 +19,8 @@ from utils.supabase_client import (
     get_supabase,
     embed_text,
     kb_search,
+    get_groq_usage,
+    increment_groq_usage,
 )
 
 st.set_page_config(
@@ -269,13 +271,18 @@ with input_tab2:
             st.image(uploaded_img, caption="Uploaded screenshot", use_column_width=True)
 
 
-# ── Groq usage tracker ────────────────────────────────────────────────────────
+# ── Groq usage tracker — persisted in Supabase, survives browser refresh ──────
 from datetime import datetime, timezone
 
 today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+# Load from Supabase on every render — so refreshes pick up the real count
+# Session state is used as a write-buffer: incremented locally after each call,
+# then written to Supabase. On refresh, Supabase is the source of truth.
 if st.session_state.get("groq_date") != today_utc:
+    # New day or first load — fetch from Supabase
     st.session_state["groq_date"]  = today_utc
-    st.session_state["groq_calls"] = 0
+    st.session_state["groq_calls"] = get_groq_usage(today_utc)
 
 groq_calls     = st.session_state.get("groq_calls", 0)
 groq_analyses  = groq_calls // 2
@@ -340,7 +347,9 @@ if diagnose_btn:
                 f"Error:\n{error_text}\n\nReturn ONLY the category name, nothing else."
             )
             error_type_raw, _ = query_llm(classify_prompt)
-            st.session_state["groq_calls"] = st.session_state.get("groq_calls", 0) + 1
+            # Increment both session state AND Supabase so refresh doesn't lose count
+            new_calls = increment_groq_usage(today_utc, increment=1)
+            st.session_state["groq_calls"] = new_calls
             error_type = error_type_raw.strip().split()[0]
 
             st.markdown("**Detected Error Type:**")
@@ -412,7 +421,8 @@ if diagnose_btn:
             )
             response, provider = query_llm(diagnosis_prompt, system_prompt)
             if provider == "groq":
-                st.session_state["groq_calls"] = st.session_state.get("groq_calls", 0) + 1
+                new_calls = increment_groq_usage(today_utc, increment=1)
+                st.session_state["groq_calls"] = new_calls
 
             # Step 5: Parse confidence
             confidence = "medium"
