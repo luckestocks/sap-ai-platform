@@ -181,12 +181,20 @@ def render_issue_card(issue: dict, your_name: str):
         except Exception:
             screenshot_data = None
 
+    # Build attachment pill — shown in header row if screenshot exists
+    attach_pill = (
+        f'<span style="background:#1e3a5f;color:#93c5fd;border-radius:10px;'
+        f'padding:2px 8px;font-size:0.70rem;font-weight:600;cursor:pointer;" '
+        f'title="Has screenshot attachment">📎</span>'
+        if screenshot_data else ""
+    )
+
     st.markdown(
         f'<div style="background:{bg};border:1px solid {border};border-radius:8px;'
-        f'padding:10px 12px;margin-bottom:8px;">'
+        f'padding:10px 12px;margin-bottom:{"4px" if screenshot_data else "8px"};">'
         f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">'
-        f'<div style="display:flex;gap:4px;flex-wrap:wrap;">'
-        f'{priority_pill(priority)}{type_pill(issue["issue_type"])}{stream_pill(issue["stream"])}'
+        f'<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;">'
+        f'{priority_pill(priority)}{type_pill(issue["issue_type"])}{stream_pill(issue["stream"])}{attach_pill}'
         f'</div>'
         f'<span style="color:#475569;font-size:0.68rem;">⏱ {time_open}</span>'
         f'</div>'
@@ -205,7 +213,7 @@ def render_issue_card(issue: dict, your_name: str):
         unsafe_allow_html=True,
     )
 
-    # Show screenshot — click thumbnail to expand to full size inline
+    # Screenshot — hidden by default, toggled by 📎 button click via JS component
     if screenshot_data:
         import streamlit.components.v1 as components
         lightbox_id = f"lb_{iid[:8]}"
@@ -213,94 +221,84 @@ def render_issue_card(issue: dict, your_name: str):
             f"""
             <style>
               * {{ margin:0; padding:0; box-sizing:border-box; }}
-              body {{ background: transparent; }}
+              body {{ background:transparent; font-family:monospace; }}
 
-              .thumb-wrap {{
-                cursor: zoom-in;
-              }}
-              .label {{
-                font-size: 0.72rem;
-                color: #64748b;
-                font-family: monospace;
-                margin-bottom: 6px;
-              }}
-              .thumb {{
-                max-width: 100%;
-                height: 110px;
-                object-fit: cover;
-                border-radius: 6px;
+              #toggle-btn-{lightbox_id} {{
+                background: #1e3a5f;
+                color: #93c5fd;
                 border: 1px solid #334155;
-                display: block;
-                transition: border-color 0.2s;
+                border-radius: 6px;
+                padding: 4px 12px;
+                font-size: 0.75rem;
+                cursor: pointer;
+                margin-bottom: 6px;
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
               }}
-              .thumb:hover {{
-                border-color: #93c5fd;
+              #toggle-btn-{lightbox_id}:hover {{
+                background: #1d6fa5;
               }}
-              .full-wrap {{
+              #img-wrap-{lightbox_id} {{
                 display: none;
                 position: relative;
-                margin-top: 8px;
+                margin-top: 4px;
               }}
-              .full-wrap.active {{
+              #img-wrap-{lightbox_id}.open {{
                 display: block;
               }}
-              .full-img {{
+              #img-wrap-{lightbox_id} img {{
                 width: 100%;
                 border-radius: 8px;
                 border: 1px solid #334155;
                 display: block;
-                cursor: zoom-out;
               }}
-              .close-btn {{
+              .close-x {{
                 position: absolute;
-                top: 8px; right: 8px;
-                background: rgba(0,0,0,0.7);
+                top: 6px; right: 6px;
+                background: rgba(0,0,0,0.75);
                 color: #fff;
                 border: none;
                 border-radius: 50%;
-                width: 28px; height: 28px;
-                font-size: 1rem;
+                width: 26px; height: 26px;
+                font-size: 0.9rem;
                 cursor: pointer;
                 display: flex; align-items: center; justify-content: center;
-                line-height: 1;
               }}
             </style>
 
-            <div class="label">📸 Screenshot — click to expand</div>
+            <button id="toggle-btn-{lightbox_id}" onclick="
+              var wrap = document.getElementById('img-wrap-{lightbox_id}');
+              var open = wrap.classList.toggle('open');
+              this.innerHTML = open ? '📎 Hide screenshot' : '📎 View screenshot';
+              setTimeout(function() {{
+                var h = document.body.scrollHeight;
+                if (window.frameElement) window.frameElement.style.height = (h+4) + 'px';
+              }}, 50);
+            ">📎 View screenshot</button>
 
-            <div class="thumb-wrap" onclick="
-              document.getElementById('full-{lightbox_id}').classList.add('active');
-              this.style.display='none';
-            ">
-              <img class="thumb" src="{screenshot_data}" />
-            </div>
-
-            <div id="full-{lightbox_id}" class="full-wrap">
-              <img class="full-img" src="{screenshot_data}"
-                onclick="
-                  this.parentElement.classList.remove('active');
-                  document.querySelector('.thumb-wrap').style.display='block';
-                "
-              />
-              <button class="close-btn" onclick="
-                document.getElementById('full-{lightbox_id}').classList.remove('active');
-                document.querySelector('.thumb-wrap').style.display='block';
+            <div id="img-wrap-{lightbox_id}">
+              <img src="{screenshot_data}" />
+              <button class="close-x" onclick="
+                document.getElementById('img-wrap-{lightbox_id}').classList.remove('open');
+                document.getElementById('toggle-btn-{lightbox_id}').innerHTML='📎 View screenshot';
+                setTimeout(function() {{
+                  var h = document.body.scrollHeight;
+                  if (window.frameElement) window.frameElement.style.height = (h+4) + 'px';
+                }}, 50);
               ">✕</button>
             </div>
 
             <script>
-              // Resize iframe to fit content after image loads
-              function resizeToContent() {{
-                const h = document.body.scrollHeight;
-                window.frameElement && (window.frameElement.style.height = h + 'px');
+              function resize() {{
+                var h = document.body.scrollHeight;
+                if (window.frameElement) window.frameElement.style.height = (h+4) + 'px';
               }}
-              document.querySelectorAll('img').forEach(img => {{
-                img.addEventListener('load', resizeToContent);
-                img.addEventListener('click', () => setTimeout(resizeToContent, 50));
-              }});
+              document.querySelector('img').addEventListener('load', resize);
+              resize();
             </script>
             """,
-            height=160,
+            height=42,
             scrolling=False,
         )
 
