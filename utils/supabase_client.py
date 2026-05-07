@@ -10,6 +10,21 @@ from functools import lru_cache
 from supabase import create_client, Client
 from sentence_transformers import SentenceTransformer
 
+# Import canonicalise_error — path differs depending on working directory
+try:
+    from utils.error_parser import canonicalise_error
+except ImportError:
+    try:
+        from error_parser import canonicalise_error
+    except ImportError:
+        # Final fallback — inline regex normalisation if error_parser unavailable
+        def canonicalise_error(text: str, llm_fn=None) -> str:
+            cleaned = re.sub(r'\b[A-Z]{1,5}\d{3,5}\b', '', text or '')
+            cleaned = re.sub(r'\b\d{3,4}/[A-Z]{2,4}\b', '', cleaned)
+            cleaned = re.sub(r'status\s+set\s+to\s+\d+', '', cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r'\b(WE|BD|SM|SE|MM|ME|FB|VA)\d{2,3}\b', '', cleaned)
+            return ' '.join(cleaned.split()).strip() or text
+
 # ── Connection ────────────────────────────────────────────────────────────────
 
 @lru_cache(maxsize=1)
@@ -73,8 +88,6 @@ def kb_search(
         load_phase, error_type, error_code, client_name, project_name,
         kb_source, relevance_score  (0-100 from reranker, or None if skipped)
     """
-    from utils.error_parser import canonicalise_error
-
     supabase = get_supabase()
 
     # Stage 1: Canonicalise query before embedding
@@ -275,10 +288,6 @@ def save_resolution(
     supabase  = get_supabase()
 
     # Canonicalise error_message before embedding.
-    # This maps all phrasings of the same error to the same vector space:
-    # "E0001 Partner profile not found" and "partner profile not available"
-    # both embed to the same canonical summary → match each other at search time.
-    from utils.error_parser import canonicalise_error
     canonical_msg = canonicalise_error(error_message)  # regex fallback (no LLM at save time)
     embedding = embed_text(canonical_msg)
 
