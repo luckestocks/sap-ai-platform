@@ -623,8 +623,8 @@ if resolve_id:
 
                             # Save to KB
                             kb_result = save_resolution(
-                                client_id   = resolve_issue.get("client_id") or "00000000-0000-0000-0000-000000000000",
-                                project_id  = resolve_issue.get("project_id") or "00000000-0000-0000-0000-000000000000",
+                                client_id     = resolve_issue.get("client_id") or None,
+                                project_id    = resolve_issue.get("project_id") or None,
                                 error_message = canonical_error.strip(),
                                 root_cause  = (
                                     f"War Room issue: {resolve_issue.get('title', '')}\n"
