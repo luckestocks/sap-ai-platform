@@ -287,3 +287,91 @@ def build_clean_error_for_llm(parsed: dict) -> str:
         return "\n".join(l.raw for l in parsed["all_lines"])
 
     return "\n".join(parts)
+
+
+# ── Semantic Canonicalisation ─────────────────────────────────────────────────
+# Converts any SAP error text (exact SAP format, screenshot OCR, plain English,
+# or mixed) into a consistent 10-15 word functional summary for embedding.
+#
+# WHY: MiniLM embeds surface form, not intent. "E0001 Partner profile not found"
+# and "partner profile not available" are semantically identical but embed
+# differently enough to fall below similarity threshold.
+#
+# Canonicalising BOTH the stored embedding AND the query embedding means all
+# variations of the same error map to the same vector space.
+#
+# This does NOT replace the original error text — it only produces the string
+# that gets embedded. The original is stored and shown to users unchanged.
+
+_CANON_PROMPT = """You are an SAP technical expert. Summarise this SAP error in 10-15 words.
+Rules:
+- Describe the FUNCTIONAL problem only (what is missing or misconfigured)
+- No error codes (no E0001, no WE20 etc.)
+- No system IDs (no 1000/LS, no client numbers)
+- No status codes (no "status 51")
+- Plain English, present tense
+- Same functional error must ALWAYS produce the same summary regardless of how it is phrased
+
+Examples:
+Input: "E0001 Partner profile not found for logical system 1000/LS. IDoc status set to 51."
+Output: Partner profile configuration missing for IDoc logical system
+
+Input: "partner profile not available"
+Output: Partner profile configuration missing for IDoc logical system
+
+Input: "WE20 config not done for LS"
+Output: Partner profile configuration missing for IDoc logical system
+
+Input: "BODS job failed: DataStore connection timeout after 30s"
+Output: BODS DataStore connection timing out during job execution
+
+Now summarise this error:
+"""
+
+
+def canonicalise_error(error_text: str, llm_fn=None) -> str:
+    """
+    Produce a canonical 10-15 word functional summary of an SAP error for embedding.
+
+    Args:
+        error_text: raw error text (any format)
+        llm_fn: callable(prompt) -> str  — pass query_llm from llm_router.
+                If None, falls back to lightweight regex normalisation.
+
+    Returns:
+        Canonical summary string to embed instead of raw error_text.
+    """
+    if not error_text or not error_text.strip():
+        return error_text
+
+    # Lightweight fallback: strip error codes, system IDs, status numbers
+    # Used when llm_fn is not available (e.g. during save_resolution at import time)
+    import re
+    def _regex_fallback(text: str) -> str:
+        # Strip leading SAP error codes
+        text = re.sub(r'\b[A-Z]{1,5}\d{3,5}\b', '', text)
+        # Strip system/client IDs like 1000/LS, CLNT100
+        text = re.sub(r'\b\d{3,4}/[A-Z]{2,4}\b', '', text)
+        text = re.sub(r'\bCLNT\d+\b', '', text, flags=re.IGNORECASE)
+        # Strip "status set to XX"
+        text = re.sub(r'status\s+set\s+to\s+\d+', '', text, flags=re.IGNORECASE)
+        text = re.sub(r'status\s*:\s*\d+', '', text, flags=re.IGNORECASE)
+        # Strip T-code references
+        text = re.sub(r'\b(WE|BD|SM|SE|MM|ME|FB|VA|VL|VF|CO|PP|QM|PM)\d{2,3}\b', '', text)
+        # Collapse whitespace
+        text = ' '.join(text.split())
+        return text.strip()
+
+    if llm_fn is None:
+        return _regex_fallback(error_text)
+
+    try:
+        prompt = _CANON_PROMPT + error_text.strip()
+        result, _ = llm_fn(prompt)
+        canonical = result.strip().split('\n')[0].strip()  # first line only
+        # Sanity check — if LLM returned something too long or empty, fallback
+        if not canonical or len(canonical) > 200:
+            return _regex_fallback(error_text)
+        return canonical
+    except Exception:
+        return _regex_fallback(error_text)
