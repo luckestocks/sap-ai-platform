@@ -36,65 +36,191 @@ def embed_text(text: str) -> list[float]:
     return model.encode(text, normalize_embeddings=True).tolist()
 
 
-# ── RAG Search — 4-Level Hierarchy ───────────────────────────────────────────
+# ── RAG Search — Additive Multi-Level ────────────────────────────────────────
+#
+# Design intent: this is a KNOWLEDGE BASE, not a decision tree.
+# We search ALL applicable levels and return ALL matching resolutions,
+# merged and deduplicated. The same error can have multiple resolutions
+# across different projects/clients — we want every one of them surfaced.
+#
+# Search scope:
+#   No client/project   → L3 Global KB only
+#   Client only         → L3 Global + L2 Client-wide
+#   Client + Project    → L3 Global + L2 Client-wide + L1 Project-specific
+#
+# Results are merged, deduplicated by fix fingerprint, sorted by similarity.
+# Each result carries a 'kb_source' field ('Global KB', 'Client KB', 'Project KB')
+# so the UI can show where each match came from.
+
+def kb_search(
+    query: str,
+    project_id: str = None,
+    client_id: str = None,
+    threshold: float = 0.65,
+    match_count: int = 10,
+) -> dict:
+    """
+    Additive multi-level KB search.
+
+    Returns:
+        {
+            "results": [ list of result dicts, sorted by similarity desc ],
+            "levels_searched": [ list of level labels ],
+            "summary_label": str   # e.g. "Global KB" / "Client KB" / "Project KB"
+        }
+
+    Each result dict has:
+        similarity, error_message, root_cause, fix_steps, t_codes,
+        load_phase, error_type, error_code, client_name, project_name,
+        kb_source  ← which level this result came from
+    """
+    supabase  = get_supabase()
+    embedding = embed_text(query)
+
+    all_results    = []
+    levels_searched = []
+    seen_fingerprints = set()   # deduplicate by (error_message[:80] + fix[:80])
+
+    def _fingerprint(r: dict) -> str:
+        msg = (r.get("error_message") or "")[:80].strip().lower()
+        fix = (r.get("fix_steps") or "")[:80].strip().lower()
+        return f"{msg}||{fix}"
+
+    def _merge(rows: list[dict], kb_source: str):
+        for r in rows:
+            fp = _fingerprint(r)
+            if fp not in seen_fingerprints:
+                seen_fingerprints.add(fp)
+                r["kb_source"] = kb_source
+                all_results.append(r)
+
+    # ── L3 — Cross-client Global KB (always searched) ─────────────────────────
+    try:
+        res = supabase.rpc(
+            "match_cross_client_kb",
+            {
+                "query_embedding": embedding,
+                "match_threshold": threshold,
+                "match_count": match_count,
+            },
+        ).execute()
+        if res.data:
+            _merge(res.data, "Global KB")
+            levels_searched.append("L3 Global")
+    except Exception:
+        pass
+
+    # ── L1 — Project-specific (only if project selected) ─────────────────────
+    if project_id:
+        try:
+            res = supabase.rpc(
+                "match_project_errors",
+                {
+                    "query_embedding": embedding,
+                    "match_project_id": project_id,
+                    "match_threshold": threshold,
+                    "match_count": match_count,
+                },
+            ).execute()
+            if res.data:
+                _merge(res.data, "Project KB")
+                if "L1 Project" not in levels_searched:
+                    levels_searched.append("L1 Project")
+        except Exception:
+            pass
+
+    # ── L2 — Client-wide, other projects (only if client selected) ───────────
+    if client_id and project_id:
+        try:
+            res = supabase.rpc(
+                "match_client_errors",
+                {
+                    "query_embedding": embedding,
+                    "match_client_id": client_id,
+                    "exclude_project_id": project_id,
+                    "match_threshold": threshold,
+                    "match_count": match_count,
+                },
+            ).execute()
+            if res.data:
+                _merge(res.data, "Client KB")
+                if "L2 Client" not in levels_searched:
+                    levels_searched.append("L2 Client")
+        except Exception:
+            pass
+    elif client_id:
+        # Client selected but no project — search all projects for this client
+        try:
+            res = supabase.rpc(
+                "match_client_errors",
+                {
+                    "query_embedding": embedding,
+                    "match_client_id": client_id,
+                    "exclude_project_id": "00000000-0000-0000-0000-000000000000",  # exclude nothing
+                    "match_threshold": threshold,
+                    "match_count": match_count,
+                },
+            ).execute()
+            if res.data:
+                _merge(res.data, "Client KB")
+                if "L2 Client" not in levels_searched:
+                    levels_searched.append("L2 Client")
+        except Exception:
+            pass
+
+    # Sort all results by similarity descending
+    all_results.sort(key=lambda r: r.get("similarity", 0), reverse=True)
+
+    # Determine summary label for badge display
+    if project_id and client_id:
+        summary_label = "Project + Client + Global KB"
+    elif client_id:
+        summary_label = "Client + Global KB"
+    else:
+        summary_label = "Global KB"
+
+    return {
+        "results": all_results,
+        "levels_searched": levels_searched,
+        "summary_label": summary_label,
+        # Legacy fields — kept so old callers don't break
+        "level": 3 if all_results else 4,
+        "label": summary_label if all_results else "LLM Fallback",
+    }
+
+
+# ── Legacy wrapper — kept for backward compatibility ──────────────────────────
+# rag_search() in utils/supabase_client.py is still imported by Admin Panel etc.
+# It now delegates to kb_search() but returns the old waterfall shape.
 
 def rag_search(
     query: str,
-    project_id: str,
-    client_id: str,
+    project_id: str = None,
+    client_id: str = None,
     l1_threshold: float = 0.75,
     l2_threshold: float = 0.75,
     l3_threshold: float = 0.70,
-    match_count: int = 3,
+    match_count: int = 10,
 ) -> dict:
     """
-    Run 4-level RAG search hierarchy.
-    Returns: { level, label, colour, results[] } — stops at first level with hits.
+    Legacy wrapper — delegates to kb_search().
+    Returns: { level, label, colour, results[] }
     """
-    supabase = get_supabase()
-    embedding = embed_text(query)
-
-    # L1 — Current project
-    res = supabase.rpc(
-        "match_project_errors",
-        {
-            "query_embedding": embedding,
-            "match_project_id": project_id,
-            "match_threshold": l1_threshold,
-            "match_count": match_count,
-        },
-    ).execute()
-    if res.data:
-        return {"level": 1, "label": "Project KB", "colour": "blue", "results": res.data}
-
-    # L2 — Same client, other projects
-    res = supabase.rpc(
-        "match_client_errors",
-        {
-            "query_embedding": embedding,
-            "match_client_id": client_id,
-            "exclude_project_id": project_id,
-            "match_threshold": l2_threshold,
-            "match_count": match_count,
-        },
-    ).execute()
-    if res.data:
-        return {"level": 2, "label": "Client KB", "colour": "green", "results": res.data}
-
-    # L3 — Cross-client anonymised KB
-    res = supabase.rpc(
-        "match_cross_client_kb",
-        {
-            "query_embedding": embedding,
-            "match_threshold": l3_threshold,
-            "match_count": match_count,
-        },
-    ).execute()
-    if res.data:
-        return {"level": 3, "label": "Global KB", "colour": "yellow", "results": res.data}
-
-    # L4 — No match found, caller falls back to LLM
-    return {"level": 4, "label": "LLM Fallback", "colour": "white", "results": []}
+    result = kb_search(
+        query=query,
+        project_id=project_id,
+        client_id=client_id,
+        threshold=min(l1_threshold, l2_threshold, l3_threshold),
+        match_count=match_count,
+    )
+    level = result["level"]
+    colour_map = {1: "blue", 2: "green", 3: "yellow", 4: "white"}
+    return {
+        "level": level,
+        "label": result["label"],
+        "colour": colour_map.get(level, "white"),
+        "results": result["results"],
+    }
 
 
 # ── Resolution Logging ────────────────────────────────────────────────────────
