@@ -212,47 +212,72 @@ def save_resolution(
     Save a resolved error to error_resolutions (L1/L2 source).
     Auto-promotes anonymised copy to cross_client_kb (L3).
 
-    Embeddings use error_message only — this aligns stored and query embeddings.
-    """
-    supabase = get_supabase()
+    If client_id or project_id is None / a zero UUID (e.g. from War Room
+    with no project selected), skips error_resolutions (which has FK constraints)
+    and pushes directly to cross_client_kb (L3) only.
 
-    # Embed ERROR MESSAGE ONLY — the search key, not the fix
+    Embeddings use error_message only — aligns stored and query embedding spaces.
+    """
+    supabase  = get_supabase()
     embedding = embed_text(error_message)
 
-    resolution_row = {
-        "client_id": client_id,
-        "project_id": project_id,
-        "error_type": error_type,
-        "error_code": error_code,
-        "error_message": error_message,
-        "root_cause": root_cause,
-        "fix_steps": fix_steps,
-        "t_codes": t_codes or [],
-        "load_phase": load_phase,
-        "time_to_resolve": time_to_resolve,
-        "embedding": embedding,
-        "created_by": created_by,
-    }
-    res = supabase.table("error_resolutions").insert(resolution_row).execute()
-    resolution_id = res.data[0]["id"] if res.data else None
+    _NULL_UUID = "00000000-0000-0000-0000-000000000000"
+    has_project = client_id and project_id and client_id != _NULL_UUID and project_id != _NULL_UUID
 
-    kb_id = None
-    if resolution_id:
-        anon = anonymise_for_kb(error_message=error_message, root_cause=root_cause, fix_steps=fix_steps)
-        kb_row = {
-            "source_id": resolution_id,
-            "error_type": error_type,
-            "error_code": error_code,
-            "error_message": anon["error_message"],
-            "root_cause": anon["root_cause"],
-            "fix_steps": anon["fix_steps"],
-            "t_codes": t_codes or [],
-            "load_phase": load_phase,
+    resolution_id = None
+
+    if has_project:
+        # Full save: error_resolutions (L1/L2) + cross_client_kb (L3)
+        resolution_row = {
+            "client_id":      client_id,
+            "project_id":     project_id,
+            "error_type":     error_type,
+            "error_code":     error_code,
+            "error_message":  error_message,
+            "root_cause":     root_cause,
+            "fix_steps":      fix_steps,
+            "t_codes":        t_codes or [],
+            "load_phase":     load_phase,
             "time_to_resolve": time_to_resolve,
-            "embedding": embed_text(anon["error_message"]),  # error_message only
+            "embedding":      embedding,
+            "created_by":     created_by,
+        }
+        try:
+            res = supabase.table("error_resolutions").insert(resolution_row).execute()
+            resolution_id = res.data[0]["id"] if res.data else None
+        except Exception:
+            resolution_id = None
+
+    # Always push to cross_client_kb (L3) — with or without a project
+    kb_id = None
+    try:
+        anon = anonymise_for_kb(
+            error_message=error_message,
+            root_cause=root_cause,
+            fix_steps=fix_steps,
+        )
+        kb_row = {
+            "source_id":      resolution_id,   # None is fine — nullable FK
+            "error_type":     error_type,
+            "error_code":     error_code,
+            "error_message":  anon["error_message"],
+            "root_cause":     anon["root_cause"],
+            "fix_steps":      anon["fix_steps"],
+            "t_codes":        t_codes or [],
+            "load_phase":     load_phase,
+            "time_to_resolve": time_to_resolve,
+            "embedding":      embed_text(anon["error_message"]),
         }
         kb_res = supabase.table("cross_client_kb").insert(kb_row).execute()
         kb_id = kb_res.data[0]["id"] if kb_res.data else None
+    except Exception:
+        kb_id = None
+
+    return {
+        "resolution_id": resolution_id,
+        "kb_id":         kb_id,
+        "status":        "saved" if (resolution_id or kb_id) else "error",
+    }
 
     return {
         "resolution_id": resolution_id,
