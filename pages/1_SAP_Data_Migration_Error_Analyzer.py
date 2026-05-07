@@ -109,7 +109,7 @@ def render_kb_results(rag_results: list, rag_label: str):
                 f'<span style="color:#94a3b8;font-size:0.75rem;font-weight:700;'
                 f'margin-right:6px;">#{i}</span>'
                 f'{_source_badge(kb_source)}'
-                f'{_pill("sim", f"{similarity:.0%}")}'
+                f'{_pill("match", f"{similarity:.0%}", bg="#1a2e1a", fg="#4ade80")}'
                 f'{_pill("phase", phase)}'
                 f'{_pill("type", etype)}'
                 f'{_pill("client", client)}'
