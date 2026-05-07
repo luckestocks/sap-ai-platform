@@ -1,8 +1,14 @@
 """
 pages/1_SAP_Migration_Error_Analyzer.py
-SAP Migration Co-pilot — AI error diagnostic with 4-level RAG hierarchy.
-Search order: L3 Global KB → L1 Project KB → L2 Client KB → L4 LLM
-Client/project selected at save time, not search time.
+SAP Migration Co-pilot — AI error diagnostic with additive multi-level KB search.
+
+KB search design:
+  No context selected  → L3 Global KB (all resolutions, all clients/projects)
+  Client selected       → L3 Global + L2 Client-wide (all resolutions for this client)
+  Client + Project      → L3 Global + L2 Client + L1 Project (all resolutions for this project)
+
+All levels are searched additively — results are merged, deduplicated, sorted by similarity.
+A single error can have multiple resolutions saved by different people/projects — all are shown.
 """
 
 import streamlit as st
@@ -20,6 +26,7 @@ from utils.supabase_client import (
     save_resolution,
     get_supabase,
     embed_text,
+    kb_search,
 )
 
 st.set_page_config(
@@ -31,18 +38,20 @@ st.set_page_config(
 with open("components/styles.css") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-st.markdown("# 🔧 SAP Migration Error Analyzer")
-st.markdown("Diagnose SAP load errors using AI + hierarchical project memory.")
+st.markdown("# 🔧 SAP Data Migration Error Analyzer")
+st.markdown("Diagnose SAP Data errors using AI + hierarchical project memory.")
+
 
 # ── RAG level badge helper ────────────────────────────────────────────────────
-def render_rag_badge(level: int):
+def render_rag_badge(level: int, custom_label: str = None):
     config = {
         1: ("🔵", "#dbeeff", "#1d6fa5", "Project KB match"),
         2: ("🟢", "#d4f5e2", "#1a7a4a", "Client KB match"),
         3: ("🟡", "#fff8d6", "#8a6d00", "Global KB match"),
         4: ("⚪", "#e8e8e8", "#555555", "LLM — no KB match found"),
     }
-    icon, bg, colour, label = config[level]
+    icon, bg, colour, default_label = config.get(level, config[4])
+    label = custom_label or default_label
     st.markdown(
         f'<span style="background:{bg};color:{colour};padding:4px 12px;'
         f'border-radius:20px;font-size:0.82rem;font-weight:600;">'
@@ -51,59 +60,63 @@ def render_rag_badge(level: int):
     )
 
 
-# ── Global-first RAG search ───────────────────────────────────────────────────
-def global_first_rag(
-    query: str,
-    project_id: str = None,
-    client_id: str = None,
-    threshold: float = 0.65,
-    match_count: int = 5,
-) -> dict:
-    supabase  = get_supabase()
-    embedding = embed_text(query)
+# ── KB source pill — shown per-result inside the expander ────────────────────
+def render_source_pill(kb_source: str):
+    source_config = {
+        "Project KB": ("🔵", "#dbeeff", "#1d6fa5"),
+        "Client KB":  ("🟢", "#d4f5e2", "#1a7a4a"),
+        "Global KB":  ("🟡", "#fff8d6", "#8a6d00"),
+    }
+    icon, bg, colour = source_config.get(kb_source, ("⚪", "#e8e8e8", "#555555"))
+    st.markdown(
+        f'<span style="background:{bg};color:{colour};padding:2px 10px;'
+        f'border-radius:12px;font-size:0.76rem;font-weight:600;">'
+        f'{icon} {kb_source}</span>',
+        unsafe_allow_html=True,
+    )
 
-    # L3 first — cross-client anonymous KB
-    res = supabase.rpc(
-        "match_cross_client_kb",
-        {
-            "query_embedding": embedding,
-            "match_threshold": threshold,
-            "match_count": match_count,
-        },
-    ).execute()
-    if res.data:
-        return {"level": 3, "label": "Global KB", "results": res.data}
 
-    # L1 — project-specific
-    if project_id:
-        res = supabase.rpc(
-            "match_project_errors",
-            {
-                "query_embedding": embedding,
-                "match_project_id": project_id,
-                "match_threshold": threshold,
-                "match_count": match_count,
-            },
-        ).execute()
-        if res.data:
-            return {"level": 1, "label": "Project KB", "results": res.data}
+# ── KB results renderer — used in both live and persistent sections ───────────
+def render_kb_results(rag_results: list, rag_label: str):
+    """
+    Renders the KB matches expander showing ALL results with their source labels.
+    Called identically during live analysis and in the persistent re-render below.
+    """
+    if not rag_results:
+        return
 
-    # L2 — client-wide
-    if client_id and project_id:
-        res = supabase.rpc(
-            "match_client_errors",
-            {
-                "query_embedding": embedding,
-                "match_client_id": client_id,
-                "exclude_project_id": project_id,
-                "match_threshold": threshold,
-                "match_count": match_count,
-            },
-        ).execute()
-        if res.data:
-            return {"level": 2, "label": "Client KB", "results": res.data}
+    n = len(rag_results)
+    with st.expander(
+        f"📚 {n} similar past resolution{'s' if n > 1 else ''} found — {rag_label}",
+        expanded=True,
+    ):
+        for i, r in enumerate(rag_results, 1):
+            # Match header with source pill
+            header_col, pill_col = st.columns([3, 1])
+            with header_col:
+                st.markdown(f"**Match {i} of {n}**")
+            with pill_col:
+                render_source_pill(r.get("kb_source", "Global KB"))
 
-    return {"level": 4, "label": "LLM Fallback", "results": []}
+            # Metrics row
+            mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+            mc1.metric("Similarity", f"{r['similarity']:.0%}")
+            mc2.metric("Phase",      r.get("load_phase")  or "—")
+            mc3.metric("Error Type", r.get("error_type")  or "—")
+            mc4.metric("Client",     r.get("client_name") or "—")
+            mc5.metric("Project",    r.get("project_name") or "—")
+
+            # T-codes
+            tcodes = r.get("t_codes") or []
+            st.markdown("**T-codes:** " + (", ".join(tcodes) if tcodes else "—"))
+
+            # Fix applied
+            fix = r.get("fix_steps") or "—"
+            st.markdown("**Fix applied:**")
+            st.info(fix)
+
+            if i < n:
+                st.markdown("---")
 
 
 # ── Optional context ──────────────────────────────────────────────────────────
@@ -173,10 +186,19 @@ with st.expander("📁 Project Context (optional — refines KB search, or set w
     with ctx_col3:
         load_phase = st.selectbox("Load Phase", ["DEV", "SIT", "UAT", "Cutover"])
 
+    # Context scope indicator
     if active_client_id and active_project_id:
-        st.success(f"✅ Will also search **{active_client_name} / {active_project_name}** KB (L1 + L2)")
+        st.success(
+            f"✅ Searching **Project KB (L1) + Client KB (L2) + Global KB (L3)** "
+            f"— {active_client_name} / {active_project_name}"
+        )
+    elif active_client_id:
+        st.info(
+            f"ℹ️ Searching **Client KB (L2) + Global KB (L3)** — {active_client_name} "
+            f"(select a project to also include L1)"
+        )
     else:
-        st.info("ℹ️ Global KB (L3) always searched. Select client/project to also include L1 + L2 search.")
+        st.info("ℹ️ Searching **Global KB (L3)** across all clients and projects.")
 
 st.divider()
 
@@ -224,35 +246,32 @@ with input_tab2:
             label="Upload error screenshot (PNG, JPG, WEBP)",
             accept=["png", "jpg", "jpeg", "webp"],
             key="copilot_screenshot",
-            help_text="Gemini Vision will extract the error text automatically.",
+            help_text="Vision LLM will extract the error text automatically.",
         )
         if uploaded_img:
             image_bytes, mime_type = get_image_bytes(uploaded_img)
             st.image(uploaded_img, caption="Uploaded screenshot", use_column_width=True)
 
-# ── Groq usage tracker ───────────────────────────────────────────────────────
+
+# ── Groq usage tracker ────────────────────────────────────────────────────────
 from datetime import datetime, timezone
 
-# Initialise daily counter (resets at midnight UTC)
 today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 if st.session_state.get("groq_date") != today_utc:
-    st.session_state["groq_date"]     = today_utc
-    st.session_state["groq_calls"]    = 0
+    st.session_state["groq_date"]  = today_utc
+    st.session_state["groq_calls"] = 0
 
-groq_calls  = st.session_state.get("groq_calls", 0)
-groq_analyses = groq_calls // 2          # 2 calls per analysis
+groq_calls     = st.session_state.get("groq_calls", 0)
+groq_analyses  = groq_calls // 2
 groq_remaining = max(0, 500 - groq_analyses)
+reset_ist      = "5:30 AM IST"
 
-# IST reset time (midnight UTC = 5:30 AM IST)
-reset_ist = "5:30 AM IST"
-
-# Colour based on remaining
 if groq_remaining > 200:
-    groq_colour = "#2ecc71"   # green
+    groq_colour = "#2ecc71"
 elif groq_remaining > 50:
-    groq_colour = "#f39c12"   # amber
+    groq_colour = "#f39c12"
 else:
-    groq_colour = "#e74c3c"   # red
+    groq_colour = "#e74c3c"
 
 provider_now = st.session_state.get("llm_provider", "groq")
 if provider_now == "groq":
@@ -266,9 +285,10 @@ if provider_now == "groq":
         unsafe_allow_html=True,
     )
     if groq_remaining == 0:
-        st.error("🚫 Daily Groq limit reached. Switch to Claude in the Admin Panel or wait until 5:30 AM IST.")
+        st.error("🚫 Daily Groq limit reached. Switch to Claude in Admin Panel or wait until 5:30 AM IST.")
     elif groq_remaining <= 50:
         st.warning(f"⚠️ Only ~{groq_remaining} analyses left on Groq today. Consider switching to Claude.")
+
 
 # ── Options ───────────────────────────────────────────────────────────────────
 opt_col1, opt_col2 = st.columns([3, 1])
@@ -281,6 +301,7 @@ with opt_col2:
     diagnose_btn = st.button("⚡ Analyze Error", type="primary", use_container_width=True)
 
 st.divider()
+
 
 # ── Diagnosis ─────────────────────────────────────────────────────────────────
 if diagnose_btn:
@@ -322,52 +343,49 @@ if diagnose_btn:
             render_error_type_badge(error_type)
             st.markdown("")
 
-            # Step 3: Global-first RAG search
-            rag_result    = {"level": 4, "label": "LLM Fallback", "results": []}
+            # Step 3: Additive KB search across all applicable levels
+            rag_result    = {"level": 4, "label": "LLM Fallback", "results": [], "summary_label": "LLM Fallback"}
             rag_context   = ""
             source_level  = "l4"
             source_detail = ""
 
             if not llm_only:
-                with st.spinner("🔍 Searching knowledge base..."):
-                    rag_result = global_first_rag(
+                with st.spinner("🔍 Searching knowledge base across all levels..."):
+                    rag_result = kb_search(
                         query=error_text,
                         project_id=active_project_id,
                         client_id=active_client_id,
                     )
 
-                level        = rag_result["level"]
-                source_level = f"l{level}"
+                results       = rag_result.get("results", [])
+                summary_label = rag_result.get("summary_label", "Global KB")
+                source_level  = f"l{rag_result.get('level', 4)}"
 
                 st.markdown("**Knowledge Base:**")
-                render_rag_badge(level)
+                # Show badge: green if hits found, grey if none
+                if results:
+                    render_rag_badge(3, custom_label=summary_label)
+                    source_detail = summary_label
+                else:
+                    render_rag_badge(4)
                 st.markdown("")
 
-                if rag_result["results"]:
-                    source_detail = f"L{level} — {rag_result['label']}"
+                if results:
+                    # Build rag_context for LLM prompt from ALL results
                     rag_lines = []
-                    for i, r in enumerate(rag_result["results"], 1):
+                    for i, r in enumerate(results, 1):
                         rag_lines.append(
-                            f"[Match {i} — similarity {r['similarity']:.0%}]\n"
+                            f"[Match {i} — {r.get('kb_source','KB')} — similarity {r['similarity']:.0%}]\n"
                             f"Error: {r['error_message']}\n"
                             f"Root cause: {r['root_cause']}\n"
                             f"Fix: {r['fix_steps']}\n"
-                            f"T-codes: {', '.join(r['t_codes'] or [])}"
+                            f"T-codes: {', '.join(r.get('t_codes') or [])}"
                         )
                     rag_context = "\n\n".join(rag_lines)
 
-                    with st.expander(
-                        f"📚 {len(rag_result['results'])} similar past resolution(s) found",
-                        expanded=False,
-                    ):
-                        for r in rag_result["results"]:
-                            st.markdown(
-                                f"**{r['error_code'] or 'Error'}** — "
-                                f"similarity {r['similarity']:.0%} | "
-                                f"phase: {r['load_phase'] or '—'}"
-                            )
-                            st.caption(r["fix_steps"] or "")
-                            st.markdown("---")
+                    # Render all KB matches
+                    render_kb_results(results, summary_label)
+
             else:
                 st.caption("🔀 LLM-only mode — KB search skipped")
                 render_rag_badge(4)
@@ -384,6 +402,7 @@ if diagnose_btn:
             )
             kb_section = (
                 f"\n\nRELEVANT PAST RESOLUTIONS FROM KNOWLEDGE BASE:\n{rag_context}\n"
+                f"Multiple resolutions may exist for the same error — consider all of them.\n"
                 f"Use these as primary reference if applicable.\n"
                 if rag_context else ""
             )
@@ -414,8 +433,7 @@ if diagnose_btn:
             ]):
                 confidence = "low"
 
-            # Step 6: store — rendered persistently below outside this block
-            # Persist everything to session — diagnosis renders below
+            # Step 6: Persist everything to session — diagnosis re-renders below
             st.session_state["last_error_text"]    = error_text
             st.session_state["last_error_type"]    = error_type
             st.session_state["last_diagnosis"]     = response
@@ -426,12 +444,12 @@ if diagnose_btn:
             st.session_state["last_provider"]      = provider
             st.session_state["last_rag_results"]   = rag_result.get("results", [])
             st.session_state["last_rag_level"]     = rag_result.get("level", 4)
-            st.session_state["last_rag_label"]     = rag_result.get("label", "LLM Fallback")
+            st.session_state["last_rag_label"]     = rag_result.get("summary_label", "LLM Fallback")
             st.session_state["chat_history"]       = []  # reset on new analysis
             st.rerun()
 
 
-# ── Persistent Diagnosis ──────────────────────────────────────────────────────
+# ── Persistent Diagnosis (survives reruns) ────────────────────────────────────
 if st.session_state.get("last_diagnosis"):
 
     # Re-render error type badge
@@ -440,34 +458,22 @@ if st.session_state.get("last_diagnosis"):
         render_error_type_badge(st.session_state["last_error_type"])
         st.markdown("")
 
-    # Re-render RAG badge
+    # Re-render KB badge
     rag_level = st.session_state.get("last_rag_level", 4)
+    rag_label = st.session_state.get("last_rag_label", "LLM Fallback")
+    rag_results = st.session_state.get("last_rag_results", [])
+
     st.markdown("**Knowledge Base:**")
-    render_rag_badge(rag_level)
+    if rag_results:
+        render_rag_badge(3, custom_label=rag_label)
+    else:
+        render_rag_badge(4)
     st.markdown("")
 
-    # Re-render KB matches expander if any
-    rag_results = st.session_state.get("last_rag_results", [])
-    rag_label   = st.session_state.get("last_rag_label", "LLM Fallback")
-    if rag_results:
-        with st.expander(
-            f"📚 {len(rag_results)} similar past resolution(s) found — {rag_label}",
-            expanded=True,
-        ):
-            for i, r in enumerate(rag_results, 1):
-                st.markdown(f"**Match {i}**")
-                mc1, mc2, mc3, mc4, mc5 = st.columns(5)
-                mc1.metric("Similarity", f"{r['similarity']:.0%}")
-                mc2.metric("Phase", r.get("load_phase") or "—")
-                mc3.metric("Error Type", r.get("error_type") or "—")
-                mc4.metric("Client", r.get("client_name") or "—")
-                mc5.metric("Project", r.get("project_name") or "—")
-                st.markdown("**T-codes:** " + (", ".join(r.get("t_codes") or []) or "—"))
-                st.markdown("**Fix applied:**")
-                st.info(r.get("fix_steps") or "—")
-                if i < len(rag_results):
-                    st.markdown("---")
+    # Re-render ALL KB matches using shared renderer
+    render_kb_results(rag_results, rag_label)
 
+    # Diagnosis card
     st.markdown("### Diagnosis")
     render_response_card(
         response_text=st.session_state["last_diagnosis"],
@@ -487,12 +493,10 @@ if st.session_state.get("last_diagnosis"):
     if "chat_history" not in st.session_state:
         st.session_state["chat_history"] = []
 
-    # Render existing chat messages
     for msg in st.session_state["chat_history"]:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # Follow-up input
     followup = st.chat_input("Ask a follow-up question about this error...")
 
     if followup:
@@ -527,7 +531,7 @@ if st.session_state.get("last_diagnosis"):
         st.session_state["chat_history"].append({"role": "assistant", "content": followup_response})
 
 
-# ── Save Resolution — collapsible ────────────────────────────────────────────
+# ── Save Resolution — collapsible ─────────────────────────────────────────────
 if st.session_state.get("last_error_text"):
     st.divider()
     with st.expander("✅ Save Resolution", expanded=False):
