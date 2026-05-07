@@ -213,94 +213,12 @@ def render_issue_card(issue: dict, your_name: str):
         unsafe_allow_html=True,
     )
 
-    # Screenshot — hidden by default, toggled by 📎 button click via JS component
+    # Screenshot — 📎 button opens a native Streamlit dialog popup
     if screenshot_data:
-        import streamlit.components.v1 as components
-        lightbox_id = f"lb_{iid[:8]}"
-        components.html(
-            f"""
-            <style>
-              * {{ margin:0; padding:0; box-sizing:border-box; }}
-              body {{ background:transparent; font-family:monospace; }}
-
-              #toggle-btn-{lightbox_id} {{
-                background: #1e3a5f;
-                color: #93c5fd;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                padding: 4px 12px;
-                font-size: 0.75rem;
-                cursor: pointer;
-                margin-bottom: 6px;
-                display: inline-flex;
-                align-items: center;
-                gap: 6px;
-              }}
-              #toggle-btn-{lightbox_id}:hover {{
-                background: #1d6fa5;
-              }}
-              #img-wrap-{lightbox_id} {{
-                display: none;
-                position: relative;
-                margin-top: 4px;
-              }}
-              #img-wrap-{lightbox_id}.open {{
-                display: block;
-              }}
-              #img-wrap-{lightbox_id} img {{
-                width: 100%;
-                border-radius: 8px;
-                border: 1px solid #334155;
-                display: block;
-              }}
-              .close-x {{
-                position: absolute;
-                top: 6px; right: 6px;
-                background: rgba(0,0,0,0.75);
-                color: #fff;
-                border: none;
-                border-radius: 50%;
-                width: 26px; height: 26px;
-                font-size: 0.9rem;
-                cursor: pointer;
-                display: flex; align-items: center; justify-content: center;
-              }}
-            </style>
-
-            <button id="toggle-btn-{lightbox_id}" onclick="
-              var wrap = document.getElementById('img-wrap-{lightbox_id}');
-              var open = wrap.classList.toggle('open');
-              this.innerHTML = open ? '📎 Hide screenshot' : '📎 View screenshot';
-              setTimeout(function() {{
-                var h = document.body.scrollHeight;
-                if (window.frameElement) window.frameElement.style.height = (h+4) + 'px';
-              }}, 50);
-            ">📎 View screenshot</button>
-
-            <div id="img-wrap-{lightbox_id}">
-              <img src="{screenshot_data}" />
-              <button class="close-x" onclick="
-                document.getElementById('img-wrap-{lightbox_id}').classList.remove('open');
-                document.getElementById('toggle-btn-{lightbox_id}').innerHTML='📎 View screenshot';
-                setTimeout(function() {{
-                  var h = document.body.scrollHeight;
-                  if (window.frameElement) window.frameElement.style.height = (h+4) + 'px';
-                }}, 50);
-              ">✕</button>
-            </div>
-
-            <script>
-              function resize() {{
-                var h = document.body.scrollHeight;
-                if (window.frameElement) window.frameElement.style.height = (h+4) + 'px';
-              }}
-              document.querySelector('img').addEventListener('load', resize);
-              resize();
-            </script>
-            """,
-            height=42,
-            scrolling=False,
-        )
+        if st.button("📎 Screenshot", key=f"shot_{iid}", use_container_width=False):
+            st.session_state["view_screenshot_data"]  = screenshot_data
+            st.session_state["view_screenshot_title"] = issue["title"]
+            st.rerun()
 
     # Action buttons — Resolved issues have no actions
     if status == "Resolved":
@@ -524,6 +442,26 @@ def apply_filters(issues: list) -> list:
     if filter_stream:
         issues = [i for i in issues if i["stream"] in filter_stream]
     return issues
+
+# ── Screenshot dialog — triggered by 📎 button on any card ───────────────────
+@st.dialog("📎 Screenshot", width="large")
+def show_screenshot_dialog():
+    title = st.session_state.get("view_screenshot_title", "")
+    data  = st.session_state.get("view_screenshot_data", "")
+    if title:
+        st.caption(f"Issue: {title}")
+    if data:
+        st.markdown(
+            f'<img src="{data}" style="width:100%;border-radius:8px;border:1px solid #334155;">',
+            unsafe_allow_html=True,
+        )
+    if st.button("Close", use_container_width=True):
+        st.session_state.pop("view_screenshot_data", None)
+        st.session_state.pop("view_screenshot_title", None)
+        st.rerun()
+
+if st.session_state.get("view_screenshot_data"):
+    show_screenshot_dialog()
 
 # ── Resolve panel — full width, above board, only shown when active ───────────
 resolve_id    = st.session_state.get("resolve_panel_id")
