@@ -22,6 +22,7 @@ from utils.supabase_client import (
     get_groq_usage,
     increment_groq_usage,
 )
+from utils.error_parser import parse_error_input, build_clean_error_for_llm
 
 st.set_page_config(
     page_title="SAP Migration Error Analyzer | SAP AI Platform",
@@ -139,6 +140,97 @@ def render_kb_results(rag_results: list, rag_label: str):
                     '<hr style="border:none;border-top:1px solid #1e293b;margin:6px 0;">',
                     unsafe_allow_html=True,
                 )
+
+
+# ── Error pattern cluster renderer ───────────────────────────────────────────
+# Only shown when input has more than 2 lines (multi-line log dump).
+
+_CLASS_STYLE = {
+    "ROOT":      ("#7f1d1d", "#fca5a5", "🔴", "Root Cause"),
+    "CASCADING": ("#7c2d12", "#fdba74", "🟠", "Cascading"),
+    "WARNING":   ("#713f12", "#fde68a", "🟡", "Warning"),
+    "NOISE":     ("#1e293b", "#475569", "⚫", "Noise / Filtered"),
+}
+
+def render_error_clusters(parsed: dict):
+    """
+    Renders the error pattern analysis panel.
+    Shows a summary bar, then per-classification detail, then cluster groups.
+    Only called when is_multiline=True.
+    """
+    root_n  = len(parsed["root_causes"])
+    casc_n  = len(parsed["cascading"])
+    warn_n  = len(parsed["warnings"])
+    noise_n = len(parsed["noise"])
+    total   = parsed["raw_lines"]
+
+    with st.expander("🔍 Error Pattern Analysis", expanded=True):
+
+        # ── Summary bar ───────────────────────────────────────────────────────
+        st.markdown(
+            f'<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
+            f'<span style="background:#7f1d1d;color:#fca5a5;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:700;">🔴 {root_n} Root Cause{"s" if root_n!=1 else ""}</span>'
+            f'<span style="background:#7c2d12;color:#fdba74;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:700;">🟠 {casc_n} Cascading</span>'
+            f'<span style="background:#713f12;color:#fde68a;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:700;">🟡 {warn_n} Warning{"s" if warn_n!=1 else ""}</span>'
+            f'<span style="background:#1e293b;color:#64748b;padding:3px 10px;border-radius:12px;font-size:0.78rem;font-weight:700;">⚫ {noise_n} Filtered</span>'
+            f'<span style="color:#475569;font-size:0.75rem;align-self:center;margin-left:4px;">{total} lines total</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Root causes — always expanded ─────────────────────────────────────
+        if parsed["root_causes"]:
+            st.markdown("**🔴 Root Cause(s) — fix these:**")
+            for line in parsed["root_causes"]:
+                area_tag = f'<span style="background:#1e3a5f;color:#93c5fd;border-radius:4px;padding:1px 6px;font-size:0.70rem;margin-right:6px;">{line.sap_area}</span>' if line.sap_area != "General" else ""
+                code_tag = f'<span style="background:#1f2937;color:#f9a8d4;border-radius:4px;padding:1px 6px;font-size:0.70rem;margin-right:6px;font-family:monospace;">{line.error_code}</span>' if line.error_code else ""
+                st.markdown(
+                    f'<div style="background:#1a0a0a;border-left:3px solid #ef4444;'
+                    f'padding:5px 10px;border-radius:0 6px 6px 0;margin-bottom:4px;font-size:0.80rem;color:#fca5a5;">'
+                    f'{area_tag}{code_tag}{line.raw}</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # ── Cascading errors ──────────────────────────────────────────────────
+        if parsed["cascading"]:
+            st.markdown("**🟠 Cascading Errors — will resolve once root cause is fixed:**")
+            for line in parsed["cascading"]:
+                st.markdown(
+                    f'<div style="background:#1a0d00;border-left:3px solid #f97316;'
+                    f'padding:5px 10px;border-radius:0 6px 6px 0;margin-bottom:4px;font-size:0.80rem;color:#fdba74;">'
+                    f'{line.raw}</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # ── Warnings ──────────────────────────────────────────────────────────
+        if parsed["warnings"]:
+            st.markdown("**🟡 Warnings:**")
+            for line in parsed["warnings"]:
+                st.markdown(
+                    f'<div style="background:#1a1200;border-left:3px solid #eab308;'
+                    f'padding:5px 10px;border-radius:0 6px 6px 0;margin-bottom:4px;font-size:0.80rem;color:#fde68a;">'
+                    f'{line.raw}</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # ── Clusters — only if more than one cluster ──────────────────────────
+        clusters = parsed["clusters"]
+        if len(clusters) > 1:
+            st.markdown("**📦 Error Clusters:**")
+            for c in clusters:
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:8px;'
+                    f'background:#0f172a;border-radius:6px;padding:5px 10px;margin-bottom:4px;">'
+                    f'<span style="background:#1e3a5f;color:#93c5fd;border-radius:4px;'
+                    f'padding:1px 8px;font-size:0.72rem;font-weight:700;">{c.sap_area}</span>'
+                    f'<span style="color:#e2e8f0;font-size:0.78rem;">{c.pattern}</span>'
+                    f'<span style="margin-left:auto;background:#334155;color:#94a3b8;'
+                    f'border-radius:10px;padding:1px 8px;font-size:0.72rem;">{c.count} error{"s" if c.count!=1 else ""}</span>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        st.caption("ℹ️ AI diagnosis below uses root causes only — cascading errors and noise filtered out.")
 
 
 # ── Optional context ──────────────────────────────────────────────────────────
@@ -340,11 +432,22 @@ if diagnose_btn:
                 st.code(extracted)
                 error_text = extracted
 
+            # Step 1b: Error pattern clustering (multi-line log dumps only)
+            # Parse the raw input, classify lines, show the breakdown UI,
+            # then replace error_text with a clean structured version for the LLM.
+            parsed = parse_error_input(error_text)
+            if parsed["is_multiline"]:
+                render_error_clusters(parsed)
+                # Replace raw paste with clean structured input for LLM
+                error_text_for_llm = build_clean_error_for_llm(parsed)
+            else:
+                error_text_for_llm = error_text
+
             # Step 2: Classify error type
             classify_prompt = (
                 f"Classify this SAP error into ONE category: "
                 f"IDoc | BODS | LTMC | LSMW | SDI | BAPI | RFC | SM21\n\n"
-                f"Error:\n{error_text}\n\nReturn ONLY the category name, nothing else."
+                f"Error:\n{error_text_for_llm}\n\nReturn ONLY the category name, nothing else."
             )
             error_type_raw, _ = query_llm(classify_prompt)
             # Increment both session state AND Supabase so refresh doesn't lose count
@@ -356,7 +459,8 @@ if diagnose_btn:
             render_error_type_badge(error_type)
             st.markdown("")
 
-            # Step 3: Additive KB search
+            # Step 3: Additive KB search — use original error_text for embedding
+            # (raw error is better for vector similarity than the structured version)
             rag_result  = {"level": 4, "label": "LLM Fallback", "results": [], "summary_label": "LLM Fallback"}
             rag_context = ""
             source_level  = "l4"
@@ -365,7 +469,7 @@ if diagnose_btn:
             if not llm_only:
                 with st.spinner("🔍 Searching knowledge base..."):
                     rag_result = kb_search(
-                        query=error_text,
+                        query=error_text,   # raw text for embedding search
                         project_id=active_project_id,
                         client_id=active_client_id,
                     )
@@ -399,7 +503,7 @@ if diagnose_btn:
                 render_rag_badge(4)
                 st.markdown("")
 
-            # Step 4: LLM diagnosis
+            # Step 4: LLM diagnosis — use clean structured error for LLM prompt
             system_prompt = (
                 "You are an expert SAP data migration consultant with deep knowledge of "
                 "IDoc, BODS, LTMC, LSMW, SDI, BAPI, RFC, and SM21 error diagnosis. "
@@ -416,7 +520,7 @@ if diagnose_btn:
                 f"Error Type: {error_type}\nLoad Phase: {load_phase}\n"
                 f"Client: {active_client_name or 'Not specified'}\n"
                 f"Project: {active_project_name or 'Not specified'}\n"
-                f"{kb_section}\nError:\n{error_text}\n\n"
+                f"{kb_section}\nError:\n{error_text_for_llm}\n\n"
                 f"Diagnose this error. Include root cause, fix steps, T-codes, and confidence level."
             )
             response, provider = query_llm(diagnosis_prompt, system_prompt)
@@ -445,6 +549,7 @@ if diagnose_btn:
                 "last_rag_results":   rag_result.get("results", []),
                 "last_rag_level":     rag_result.get("level", 4),
                 "last_rag_label":     rag_result.get("summary_label", "LLM Fallback"),
+                "last_parsed":        parsed if parsed["is_multiline"] else None,
                 "chat_history":       [],
             })
             st.rerun()
@@ -460,6 +565,11 @@ if st.session_state.get("last_diagnosis"):
 
     rag_results = st.session_state.get("last_rag_results", [])
     rag_label   = st.session_state.get("last_rag_label", "LLM Fallback")
+
+    # Re-render clustering panel if input was multi-line
+    last_parsed = st.session_state.get("last_parsed")
+    if last_parsed:
+        render_error_clusters(last_parsed)
 
     st.markdown("**Knowledge Base:**")
     if rag_results:
