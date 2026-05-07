@@ -55,25 +55,31 @@ def kb_search(
     query: str,
     project_id: str = None,
     client_id: str = None,
-    threshold: float = 0.60,
-    match_count: int = 10,
+    threshold: float = 0.40,   # Low — canonicalisation handles precision; reranker handles recall
+    match_count: int = 15,     # Fetch more candidates for reranker to work with
+    llm_fn=None,               # Pass query_llm from llm_router for canonicalisation + reranking
 ) -> dict:
     """
-    Additive multi-level KB search.
-    Returns ALL matching resolutions across all applicable levels.
+    Two-stage KB search:
+      Stage 1 — Broad vector search on canonicalised query (high recall, low threshold)
+      Stage 2 — LLM reranking of candidates (high precision, removes false positives)
+
+    Canonicalisation: both stored embeddings and query embeddings use a functional
+    summary (no error codes, no system IDs) so all phrasings of the same error
+    map to the same vector space.
 
     Each result dict includes:
         similarity, error_message, root_cause, fix_steps, t_codes,
         load_phase, error_type, error_code, client_name, project_name,
-        kb_source  ('Global KB' | 'Client KB' | 'Project KB')
+        kb_source, relevance_score  (0-100 from reranker, or None if skipped)
     """
-    supabase  = get_supabase()
-    # Normalise query: strip leading SAP error codes (E0001, ME123 etc.)
-    # so "E0001 Partner profile not found" and "Partner profile not found"
-    # embed to the same vector space and match each other above threshold.
-    import re as _re
-    normalised_query = _re.sub(r'^\s*[A-Z]{1,5}\d{3,5}\s*', '', query).strip()
-    embedding = embed_text(normalised_query if normalised_query else query)
+    from utils.error_parser import canonicalise_error
+
+    supabase = get_supabase()
+
+    # Stage 1: Canonicalise query before embedding
+    canonical_query = canonicalise_error(query, llm_fn=llm_fn)
+    embedding = embed_text(canonical_query)
 
     all_results       = []
     levels_searched   = []
@@ -154,6 +160,49 @@ def kb_search(
 
     all_results.sort(key=lambda r: r.get("similarity", 0), reverse=True)
 
+    # Stage 2: LLM reranking — only if we have candidates and an LLM function
+    # Scores each candidate 0-100 for relevance to the original query.
+    # Filters out false positives that slipped through the low vector threshold.
+    if all_results and llm_fn is not None:
+        try:
+            candidates_text = ""
+            for i, r in enumerate(all_results, 1):
+                candidates_text += (
+                    f"[{i}] Error: {r.get('error_message','')[:200]}\n"
+                    f"    Fix: {r.get('fix_steps','')[:150]}\n\n"
+                )
+
+            rerank_prompt = (
+                f"You are an SAP expert. Score each candidate resolution for relevance "
+                f"to the query error. Return ONLY a JSON array of integers (scores 0-100), "
+                f"one per candidate, in the same order. No explanation.\n\n"
+                f"Query error:\n{query[:300]}\n\n"
+                f"Candidates:\n{candidates_text}"
+                f"Return format: [score1, score2, ...]\n"
+                f"Rules: 100=exact match, 70+=relevant, <50=unrelated. "
+                f"Same functional issue = high score regardless of phrasing."
+            )
+            raw_scores, _ = llm_fn(rerank_prompt)
+
+            # Parse scores safely
+            import json, re as _re
+            match = _re.search(r'\[[\d,\s]+\]', raw_scores)
+            if match:
+                scores = json.loads(match.group())
+                # Apply scores — filter out anything below 50
+                reranked = []
+                for i, r in enumerate(all_results):
+                    score = scores[i] if i < len(scores) else 0
+                    if score >= 50:
+                        r["relevance_score"] = score
+                        reranked.append(r)
+                # Sort by relevance score descending
+                reranked.sort(key=lambda r: r.get("relevance_score", 0), reverse=True)
+                all_results = reranked
+        except Exception:
+            # Reranking failed — return vector results as-is (still useful)
+            pass
+
     if project_id and client_id:
         summary_label = "Project + Client + Global KB"
     elif client_id:
@@ -225,15 +274,13 @@ def save_resolution(
     """
     supabase  = get_supabase()
 
-    # Normalise: strip leading SAP error codes before embedding
-    # so "E0001 Partner profile not found" and "Partner profile not found"
-    # produce identical embeddings and match each other in similarity search.
-    import re as _re
-    def _normalise(text: str) -> str:
-        cleaned = _re.sub(r'^\s*[A-Z]{1,5}\d{3,5}\s*', '', text).strip()
-        return cleaned if cleaned else text
-
-    embedding = embed_text(_normalise(error_message))
+    # Canonicalise error_message before embedding.
+    # This maps all phrasings of the same error to the same vector space:
+    # "E0001 Partner profile not found" and "partner profile not available"
+    # both embed to the same canonical summary → match each other at search time.
+    from utils.error_parser import canonicalise_error
+    canonical_msg = canonicalise_error(error_message)  # regex fallback (no LLM at save time)
+    embedding = embed_text(canonical_msg)
 
     _NULL_UUID = "00000000-0000-0000-0000-000000000000"
     has_project = client_id and project_id and client_id != _NULL_UUID and project_id != _NULL_UUID
@@ -280,7 +327,7 @@ def save_resolution(
             "t_codes":        t_codes or [],
             "load_phase":     load_phase,
             "time_to_resolve": time_to_resolve,
-            "embedding":      embed_text(_normalise(anon["error_message"])),
+            "embedding":      embed_text(canonicalise_error(anon["error_message"])),
         }
         kb_res = supabase.table("cross_client_kb").insert(kb_row).execute()
         kb_id = kb_res.data[0]["id"] if kb_res.data else None
