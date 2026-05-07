@@ -205,77 +205,102 @@ def render_issue_card(issue: dict, your_name: str):
         unsafe_allow_html=True,
     )
 
-    # Show screenshot as lightbox — click thumbnail to open full-screen overlay
+    # Show screenshot — click thumbnail to expand to full size inline
     if screenshot_data:
         import streamlit.components.v1 as components
         lightbox_id = f"lb_{iid[:8]}"
         components.html(
             f"""
             <style>
-              .lb-thumb-{lightbox_id} {{
+              * {{ margin:0; padding:0; box-sizing:border-box; }}
+              body {{ background: transparent; }}
+
+              .thumb-wrap {{
+                cursor: zoom-in;
+              }}
+              .label {{
+                font-size: 0.72rem;
+                color: #64748b;
+                font-family: monospace;
+                margin-bottom: 6px;
+              }}
+              .thumb {{
                 max-width: 100%;
-                max-height: 120px;
+                height: 110px;
                 object-fit: cover;
                 border-radius: 6px;
-                cursor: zoom-in;
                 border: 1px solid #334155;
                 display: block;
-                margin-top: 4px;
+                transition: border-color 0.2s;
               }}
-              .lb-overlay-{lightbox_id} {{
+              .thumb:hover {{
+                border-color: #93c5fd;
+              }}
+              .full-wrap {{
                 display: none;
-                position: fixed;
-                top: 0; left: 0;
-                width: 100vw; height: 100vh;
-                background: rgba(0,0,0,0.92);
-                z-index: 99999;
-                justify-content: center;
-                align-items: center;
+                position: relative;
+                margin-top: 8px;
+              }}
+              .full-wrap.active {{
+                display: block;
+              }}
+              .full-img {{
+                width: 100%;
+                border-radius: 8px;
+                border: 1px solid #334155;
+                display: block;
                 cursor: zoom-out;
               }}
-              .lb-overlay-{lightbox_id}.active {{
-                display: flex;
-              }}
-              .lb-overlay-{lightbox_id} img {{
-                max-width: 92vw;
-                max-height: 92vh;
-                border-radius: 8px;
-                box-shadow: 0 0 60px rgba(0,0,0,0.8);
-                object-fit: contain;
-              }}
-              .lb-close-{lightbox_id} {{
-                position: fixed;
-                top: 18px; right: 24px;
+              .close-btn {{
+                position: absolute;
+                top: 8px; right: 8px;
+                background: rgba(0,0,0,0.7);
                 color: #fff;
-                font-size: 2rem;
+                border: none;
+                border-radius: 50%;
+                width: 28px; height: 28px;
+                font-size: 1rem;
                 cursor: pointer;
-                z-index: 100000;
+                display: flex; align-items: center; justify-content: center;
                 line-height: 1;
               }}
             </style>
 
-            <div style="font-size:0.72rem;color:#64748b;margin-bottom:4px;">
-              📸 Screenshot — click to view full size
-            </div>
-            <img
-              class="lb-thumb-{lightbox_id}"
-              src="{screenshot_data}"
-              onclick="document.getElementById('overlay-{lightbox_id}').classList.add('active')"
-            />
+            <div class="label">📸 Screenshot — click to expand</div>
 
-            <div
-              id="overlay-{lightbox_id}"
-              class="lb-overlay-{lightbox_id}"
-              onclick="this.classList.remove('active')"
-            >
-              <span
-                class="lb-close-{lightbox_id}"
-                onclick="document.getElementById('overlay-{lightbox_id}').classList.remove('active')"
-              >✕</span>
-              <img src="{screenshot_data}" onclick="event.stopPropagation()" />
+            <div class="thumb-wrap" onclick="
+              document.getElementById('full-{lightbox_id}').classList.add('active');
+              this.style.display='none';
+            ">
+              <img class="thumb" src="{screenshot_data}" />
             </div>
+
+            <div id="full-{lightbox_id}" class="full-wrap">
+              <img class="full-img" src="{screenshot_data}"
+                onclick="
+                  this.parentElement.classList.remove('active');
+                  document.querySelector('.thumb-wrap').style.display='block';
+                "
+              />
+              <button class="close-btn" onclick="
+                document.getElementById('full-{lightbox_id}').classList.remove('active');
+                document.querySelector('.thumb-wrap').style.display='block';
+              ">✕</button>
+            </div>
+
+            <script>
+              // Resize iframe to fit content after image loads
+              function resizeToContent() {{
+                const h = document.body.scrollHeight;
+                window.frameElement && (window.frameElement.style.height = h + 'px');
+              }}
+              document.querySelectorAll('img').forEach(img => {{
+                img.addEventListener('load', resizeToContent);
+                img.addEventListener('click', () => setTimeout(resizeToContent, 50));
+              }});
+            </script>
             """,
-            height=145,
+            height=160,
             scrolling=False,
         )
 
