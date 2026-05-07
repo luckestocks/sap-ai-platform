@@ -47,6 +47,8 @@ with st.sidebar:
                  label="✅ Data Quality Checker")
     st.page_link("pages/3_NL_Query.py",
                  label="📊 Datasphere NL Query")
+    st.page_link("pages/5_Legacy_SAP_Mapper.py",
+                 label="🗺️ Legacy ERP → SAP Mapper")
     st.page_link("pages/4_Admin_Panel.py",
                  label="⚙️ Admin Panel")
     st.divider()
@@ -64,11 +66,11 @@ with st.sidebar:
 st.markdown("""
 <div class="hero">
     <h1>⚡ SAP AI Platform</h1>
-    <p class="hero-sub">Three RAG-powered AI tools for SAP Data Migration & Analytics professionals</p>
+    <p class="hero-sub">Four AI-powered tools for SAP Data Migration & Analytics professionals</p>
 </div>
 """, unsafe_allow_html=True)
 
-col1, col2, col3 = st.columns(3)
+col1, col2 = st.columns(2)
 
 with col1:
     st.markdown("""
@@ -94,6 +96,8 @@ with col2:
     st.page_link("pages/2_SAP_Data_Migration_Data_Quality_Checker.py",
                  label="Open Quality Checker →")
 
+col3, col4 = st.columns(2)
+
 with col3:
     st.markdown("""
     <div class="tool-card tool-card--purple">
@@ -105,6 +109,18 @@ with col3:
     """, unsafe_allow_html=True)
     st.page_link("pages/3_NL_Query.py",
                  label="Open NL Query →")
+
+with col4:
+    st.markdown("""
+    <div class="tool-card tool-card--orange">
+        <div class="tool-icon">🗺️</div>
+        <h3>Legacy ERP → SAP Mapper</h3>
+        <p>AI maps legacy ERP fields (MTD, QAD, Oracle, Infor…) to SAP tables. Review, edit and export the mapping spec.</p>
+        <div class="tool-badge">Phase 1 — Active</div>
+    </div>
+    """, unsafe_allow_html=True)
+    st.page_link("pages/5_Legacy_SAP_Mapper.py",
+                 label="Open Legacy Mapper →")
 
 st.divider()
 st.markdown("### System Status")
