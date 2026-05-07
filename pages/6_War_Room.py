@@ -609,17 +609,37 @@ if resolve_id:
                                     media_type="image/png",
                                 )
                             else:
-                                # Text path — normalise free-text description to canonical SAP error
-                                normalise_prompt = (
-                                    f"You are an SAP expert. Based on this issue title and description, "
-                                    f"reconstruct the canonical SAP error message as it would appear in "
-                                    f"the SAP system (error codes, status codes, transaction references). "
-                                    f"Return only the error text — no explanations.\n\n"
-                                    f"Issue Type: {resolve_issue.get('issue_type', '')}\n"
-                                    f"Title: {resolve_issue.get('title', '')}\n"
-                                    f"Description: {display_desc or 'No description provided'}"
-                                )
-                                canonical_error, _ = query_llm(normalise_prompt)
+                                # Text path — decide whether to use title directly
+                                # or ask LLM to normalise.
+                                # If the title already contains SAP markers (error codes,
+                                # T-codes, status numbers), use it directly — it IS the
+                                # canonical error. LLM normalisation would only add noise
+                                # and produce a different embedding from what users search.
+                                import re as _re
+                                title_text = resolve_issue.get("title", "")
+                                has_sap_markers = bool(_re.search(
+                                    r'\b([A-Z]{1,5}\d{3,5}|status\s+\d{2}|WE\d{2}|BD\d{2}|SM\d{2}|SE\d{2}|MM\d{2})\b',
+                                    title_text, _re.IGNORECASE
+                                ))
+
+                                if has_sap_markers or not display_desc:
+                                    # Title is already a good SAP error — use as-is
+                                    # Combine title + description if both present
+                                    canonical_error = title_text
+                                    if display_desc:
+                                        canonical_error = f"{title_text}\n{display_desc}"
+                                else:
+                                    # Pure human description — ask LLM to reconstruct
+                                    normalise_prompt = (
+                                        f"You are an SAP expert. Based on this issue title and description, "
+                                        f"reconstruct the canonical SAP error message as it would appear in "
+                                        f"the SAP system (error codes, status codes, transaction references). "
+                                        f"Return only the error text — no explanations, no preamble.\n\n"
+                                        f"Issue Type: {resolve_issue.get('issue_type', '')}\n"
+                                        f"Title: {title_text}\n"
+                                        f"Description: {display_desc}"
+                                    )
+                                    canonical_error, _ = query_llm(normalise_prompt)
 
                             # Save to KB
                             kb_result = save_resolution(
