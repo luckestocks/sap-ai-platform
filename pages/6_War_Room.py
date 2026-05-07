@@ -169,6 +169,18 @@ def render_issue_card(issue: dict, your_name: str):
     if issue.get("resolved_at") and issue.get("raised_at"):
         time_to_resolve = fmt_duration(issue["raised_at"], issue["resolved_at"])
 
+    # Split description from embedded screenshot marker
+    raw_desc = issue.get("description") or ""
+    screenshot_data = None
+    display_desc    = raw_desc
+    if "[SCREENSHOT:" in raw_desc:
+        parts        = raw_desc.split("[SCREENSHOT:", 1)
+        display_desc = parts[0].strip()
+        try:
+            screenshot_data = parts[1].rstrip("]")
+        except Exception:
+            screenshot_data = None
+
     st.markdown(
         f'<div style="background:{bg};border:1px solid {border};border-radius:8px;'
         f'padding:10px 12px;margin-bottom:8px;">'
@@ -180,8 +192,8 @@ def render_issue_card(issue: dict, your_name: str):
         f'</div>'
         f'<div style="color:#e2e8f0;font-size:0.85rem;font-weight:600;margin-bottom:4px;">'
         f'{issue["title"]}</div>'
-        + (f'<div style="color:#94a3b8;font-size:0.75rem;margin-bottom:6px;">{issue["description"]}</div>'
-           if issue.get("description") else "")
+        + (f'<div style="color:#94a3b8;font-size:0.75rem;margin-bottom:6px;">{display_desc}</div>'
+           if display_desc else "")
         + f'<div style="display:flex;justify-content:space-between;align-items:center;">'
         f'<span style="color:#475569;font-size:0.70rem;">🙋 {issue["raised_by"]}'
         + (f' → ⚙️ {issue["claimed_by"]}' if issue.get("claimed_by") else "")
@@ -192,6 +204,12 @@ def render_issue_card(issue: dict, your_name: str):
         + f'</div>',
         unsafe_allow_html=True,
     )
+
+    # Show screenshot if attached
+    if screenshot_data:
+        with st.expander("📸 Screenshot", expanded=False):
+            st.markdown(f'<img src="{screenshot_data}" style="max-width:100%;border-radius:6px;">',
+                        unsafe_allow_html=True)
 
     # Action buttons — Resolved issues have no actions
     if status == "Resolved":
@@ -319,6 +337,27 @@ st.divider()
 
 # ── Log new issue ─────────────────────────────────────────────────────────────
 with st.expander("➕ Log New Issue", expanded=len(all_issues) == 0):
+
+    # Paste screenshot — must live OUTSIDE st.form()
+    from streamlit_paste_button import paste_image_button as pbutton
+    import io as _io
+    import base64
+
+    st.caption("📋 Attach a screenshot (optional) — Win+Shift+S to snip, then click below and Ctrl+V")
+    paste_result = pbutton(
+        label="📋 Paste Screenshot",
+        background_color="#1E3A5F",
+        hover_background_color="#1d6fa5",
+        key="wr_paste_screenshot",
+    )
+    if paste_result.image_data is not None:
+        st.session_state["wr_screenshot"] = paste_result.image_data
+    if st.session_state.get("wr_screenshot"):
+        st.image(st.session_state["wr_screenshot"], caption="Screenshot attached", width=400)
+        if st.button("✖ Remove screenshot", key="wr_remove_screenshot"):
+            st.session_state.pop("wr_screenshot", None)
+            st.rerun()
+
     with st.form("new_issue_form"):
         ni1, ni2, ni3 = st.columns(3)
         with ni1:
@@ -344,9 +383,21 @@ with st.expander("➕ Log New Issue", expanded=len(all_issues) == 0):
         if not ni_title.strip():
             st.warning("Please add a title.")
         else:
+            # Convert screenshot to base64 and append to description if present
+            desc_text = ni_desc.strip()
+            if st.session_state.get("wr_screenshot"):
+                try:
+                    buf = _io.BytesIO()
+                    st.session_state["wr_screenshot"].save(buf, format="PNG")
+                    b64 = base64.b64encode(buf.getvalue()).decode()
+                    # Store marker so card renderer can detect and show it
+                    desc_text = (desc_text + "\n" if desc_text else "") + f"[SCREENSHOT:data:image/png;base64,{b64}]"
+                except Exception:
+                    pass  # screenshot encode failed — log without it
+
             ok = create_issue({
                 "title":         ni_title.strip(),
-                "description":   ni_desc.strip() or None,
+                "description":   desc_text or None,
                 "issue_type":    ni_type,
                 "stream":        ni_stream,
                 "priority":      ni_priority,
@@ -358,6 +409,7 @@ with st.expander("➕ Log New Issue", expanded=len(all_issues) == 0):
                 "project_id":    wr_project_id,
             })
             if ok:
+                st.session_state.pop("wr_screenshot", None)
                 st.success(f"✅ Issue logged: {ni_title.strip()}")
                 st.rerun()
 
