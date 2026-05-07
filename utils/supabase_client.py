@@ -22,8 +22,6 @@ def get_supabase() -> Client:
 
 
 # ── Embedding Model ───────────────────────────────────────────────────────────
-# MiniLM L6 v2 — 384 dimensions, free, runs on Streamlit Cloud
-# Cached so the model loads once per session
 
 @lru_cache(maxsize=1)
 def get_embedding_model() -> SentenceTransformer:
@@ -38,53 +36,47 @@ def embed_text(text: str) -> list[float]:
 
 # ── RAG Search — Additive Multi-Level ────────────────────────────────────────
 #
-# Design intent: this is a KNOWLEDGE BASE, not a decision tree.
-# We search ALL applicable levels and return ALL matching resolutions,
-# merged and deduplicated. The same error can have multiple resolutions
-# across different projects/clients — we want every one of them surfaced.
+# EMBEDDING DESIGN (critical):
+#   Embeddings are stored and queried on ERROR MESSAGE ONLY.
+#   fix_steps is metadata — NOT part of the embedding.
+#   This aligns query space with stored embedding space so every resolution
+#   for the same error scores equally high, regardless of fix length/content.
+#   We search BY error pattern; different fixes are surfaced as separate results.
 #
-# Search scope:
-#   No client/project   → L3 Global KB only
-#   Client only         → L3 Global + L2 Client-wide
-#   Client + Project    → L3 Global + L2 Client-wide + L1 Project-specific
+# SEARCH SCOPE:
+#   No context  → L3 Global KB only (all clients, all projects)
+#   Client only → L3 Global + L2 Client-wide
+#   Client+Proj → L3 Global + L2 Client + L1 Project
 #
-# Results are merged, deduplicated by fix fingerprint, sorted by similarity.
-# Each result carries a 'kb_source' field ('Global KB', 'Client KB', 'Project KB')
-# so the UI can show where each match came from.
+#   All applicable levels searched additively.
+#   Results are merged, deduplicated by fix_steps fingerprint, sorted by similarity.
 
 def kb_search(
     query: str,
     project_id: str = None,
     client_id: str = None,
-    threshold: float = 0.65,
+    threshold: float = 0.70,
     match_count: int = 10,
 ) -> dict:
     """
     Additive multi-level KB search.
+    Returns ALL matching resolutions across all applicable levels.
 
-    Returns:
-        {
-            "results": [ list of result dicts, sorted by similarity desc ],
-            "levels_searched": [ list of level labels ],
-            "summary_label": str   # e.g. "Global KB" / "Client KB" / "Project KB"
-        }
-
-    Each result dict has:
+    Each result dict includes:
         similarity, error_message, root_cause, fix_steps, t_codes,
         load_phase, error_type, error_code, client_name, project_name,
-        kb_source  ← which level this result came from
+        kb_source  ('Global KB' | 'Client KB' | 'Project KB')
     """
     supabase  = get_supabase()
     embedding = embed_text(query)
 
-    all_results    = []
-    levels_searched = []
-    seen_fingerprints = set()   # deduplicate by (error_message[:80] + fix[:80])
+    all_results       = []
+    levels_searched   = []
+    seen_fingerprints = set()
 
     def _fingerprint(r: dict) -> str:
-        msg = (r.get("error_message") or "")[:80].strip().lower()
-        fix = (r.get("fix_steps") or "")[:80].strip().lower()
-        return f"{msg}||{fix}"
+        # Deduplicate by fix content — same fix from multiple levels won't double-show
+        return (r.get("fix_steps") or "")[:120].strip().lower()
 
     def _merge(rows: list[dict], kb_source: str):
         for r in rows:
@@ -94,34 +86,28 @@ def kb_search(
                 r["kb_source"] = kb_source
                 all_results.append(r)
 
-    # ── L3 — Cross-client Global KB (always searched) ─────────────────────────
+    # L3 — Cross-client Global KB (always searched)
     try:
-        res = supabase.rpc(
-            "match_cross_client_kb",
-            {
-                "query_embedding": embedding,
-                "match_threshold": threshold,
-                "match_count": match_count,
-            },
-        ).execute()
+        res = supabase.rpc("match_cross_client_kb", {
+            "query_embedding": embedding,
+            "match_threshold": threshold,
+            "match_count": match_count,
+        }).execute()
         if res.data:
             _merge(res.data, "Global KB")
             levels_searched.append("L3 Global")
     except Exception:
         pass
 
-    # ── L1 — Project-specific (only if project selected) ─────────────────────
+    # L1 — Project-specific
     if project_id:
         try:
-            res = supabase.rpc(
-                "match_project_errors",
-                {
-                    "query_embedding": embedding,
-                    "match_project_id": project_id,
-                    "match_threshold": threshold,
-                    "match_count": match_count,
-                },
-            ).execute()
+            res = supabase.rpc("match_project_errors", {
+                "query_embedding": embedding,
+                "match_project_id": project_id,
+                "match_threshold": threshold,
+                "match_count": match_count,
+            }).execute()
             if res.data:
                 _merge(res.data, "Project KB")
                 if "L1 Project" not in levels_searched:
@@ -129,19 +115,16 @@ def kb_search(
         except Exception:
             pass
 
-    # ── L2 — Client-wide, other projects (only if client selected) ───────────
+    # L2 — Client-wide
     if client_id and project_id:
         try:
-            res = supabase.rpc(
-                "match_client_errors",
-                {
-                    "query_embedding": embedding,
-                    "match_client_id": client_id,
-                    "exclude_project_id": project_id,
-                    "match_threshold": threshold,
-                    "match_count": match_count,
-                },
-            ).execute()
+            res = supabase.rpc("match_client_errors", {
+                "query_embedding": embedding,
+                "match_client_id": client_id,
+                "exclude_project_id": project_id,
+                "match_threshold": threshold,
+                "match_count": match_count,
+            }).execute()
             if res.data:
                 _merge(res.data, "Client KB")
                 if "L2 Client" not in levels_searched:
@@ -149,18 +132,14 @@ def kb_search(
         except Exception:
             pass
     elif client_id:
-        # Client selected but no project — search all projects for this client
         try:
-            res = supabase.rpc(
-                "match_client_errors",
-                {
-                    "query_embedding": embedding,
-                    "match_client_id": client_id,
-                    "exclude_project_id": "00000000-0000-0000-0000-000000000000",  # exclude nothing
-                    "match_threshold": threshold,
-                    "match_count": match_count,
-                },
-            ).execute()
+            res = supabase.rpc("match_client_errors", {
+                "query_embedding": embedding,
+                "match_client_id": client_id,
+                "exclude_project_id": "00000000-0000-0000-0000-000000000000",
+                "match_threshold": threshold,
+                "match_count": match_count,
+            }).execute()
             if res.data:
                 _merge(res.data, "Client KB")
                 if "L2 Client" not in levels_searched:
@@ -168,10 +147,8 @@ def kb_search(
         except Exception:
             pass
 
-    # Sort all results by similarity descending
     all_results.sort(key=lambda r: r.get("similarity", 0), reverse=True)
 
-    # Determine summary label for badge display
     if project_id and client_id:
         summary_label = "Project + Client + Global KB"
     elif client_id:
@@ -183,15 +160,12 @@ def kb_search(
         "results": all_results,
         "levels_searched": levels_searched,
         "summary_label": summary_label,
-        # Legacy fields — kept so old callers don't break
         "level": 3 if all_results else 4,
         "label": summary_label if all_results else "LLM Fallback",
     }
 
 
-# ── Legacy wrapper — kept for backward compatibility ──────────────────────────
-# rag_search() in utils/supabase_client.py is still imported by Admin Panel etc.
-# It now delegates to kb_search() but returns the old waterfall shape.
+# ── Legacy wrapper ────────────────────────────────────────────────────────────
 
 def rag_search(
     query: str,
@@ -202,10 +176,6 @@ def rag_search(
     l3_threshold: float = 0.70,
     match_count: int = 10,
 ) -> dict:
-    """
-    Legacy wrapper — delegates to kb_search().
-    Returns: { level, label, colour, results[] }
-    """
     result = kb_search(
         query=query,
         project_id=project_id,
@@ -240,17 +210,15 @@ def save_resolution(
 ) -> dict:
     """
     Save a resolved error to error_resolutions (L1/L2 source).
-    Auto-promotes an anonymised copy to cross_client_kb (L3).
-    Returns: { resolution_id, kb_id, status }
+    Auto-promotes anonymised copy to cross_client_kb (L3).
+
+    Embeddings use error_message only — this aligns stored and query embeddings.
     """
     supabase = get_supabase()
 
-    # Embed error message + actual fix steps
-    # Using fix_steps (not root_cause) so different fixes for same error get distinct embeddings
-    embed_input = f"{error_message}\n{fix_steps}"
-    embedding = embed_text(embed_input)
+    # Embed ERROR MESSAGE ONLY — the search key, not the fix
+    embedding = embed_text(error_message)
 
-    # Save to error_resolutions
     resolution_row = {
         "client_id": client_id,
         "project_id": project_id,
@@ -268,14 +236,9 @@ def save_resolution(
     res = supabase.table("error_resolutions").insert(resolution_row).execute()
     resolution_id = res.data[0]["id"] if res.data else None
 
-    # Auto-promote anonymised copy to cross_client_kb
     kb_id = None
     if resolution_id:
-        anon = anonymise_for_kb(
-            error_message=error_message,
-            root_cause=root_cause,
-            fix_steps=fix_steps,
-        )
+        anon = anonymise_for_kb(error_message=error_message, root_cause=root_cause, fix_steps=fix_steps)
         kb_row = {
             "source_id": resolution_id,
             "error_type": error_type,
@@ -286,7 +249,7 @@ def save_resolution(
             "t_codes": t_codes or [],
             "load_phase": load_phase,
             "time_to_resolve": time_to_resolve,
-            "embedding": embed_text(f"{anon['error_message']}\n{anon['fix_steps']}"),
+            "embedding": embed_text(anon["error_message"]),  # error_message only
         }
         kb_res = supabase.table("cross_client_kb").insert(kb_row).execute()
         kb_id = kb_res.data[0]["id"] if kb_res.data else None
@@ -300,34 +263,21 @@ def save_resolution(
 
 # ── Anonymisation for L3 ──────────────────────────────────────────────────────
 
-# Patterns that identify client-specific PII to strip
 _PII_PATTERNS = [
-    # Company codes, plant codes, sales orgs (4-char alphanumeric like 1000, IN01, ZPLM)
     (r'\b[A-Z0-9]{4}\b(?=\s*(company code|plant|sales org|storage loc|purch org))', '[CODE]'),
-    # Z-objects (custom SAP objects starting with Z or Y)
     (r'\bZ[A-Z0-9_]{2,}\b', '[Z_OBJECT]'),
     (r'\bY[A-Z0-9_]{2,}\b', '[Y_OBJECT]'),
-    # System/RFC names (common pattern: SID_CLNT or SID000)
     (r'\b[A-Z]{2,3}[0-9]{3}\b', '[SYSTEM_ID]'),
-    # Explicit client/project markers
     (r'\b(client|project|company)\s*[:\-]?\s*["\']?[A-Za-z0-9\s\-_]{2,30}["\']?', '[CLIENT_REF]'),
-    # Person names preceded by "by" or "assigned to" (rough heuristic)
     (r'(?i)(assigned to|fixed by|raised by|reported by)\s+[A-Z][a-z]+\s+[A-Z][a-z]+', r'\1 [TEAM_MEMBER]'),
 ]
 
 
-def anonymise_for_kb(
-    error_message: str,
-    root_cause: str,
-    fix_steps: str,
-) -> dict:
-    """Strip client/project PII from text before promoting to cross_client_kb."""
-
+def anonymise_for_kb(error_message: str, root_cause: str, fix_steps: str) -> dict:
     def _strip(text: str) -> str:
         for pattern, replacement in _PII_PATTERNS:
             text = re.sub(pattern, replacement, text)
         return text
-
     return {
         "error_message": _strip(error_message),
         "root_cause": _strip(root_cause),
@@ -356,14 +306,12 @@ def get_projects(client_id: str) -> list[dict]:
 
 
 def create_client_record(name: str) -> Optional[str]:
-    """Create a new client. Returns the new client ID."""
     supabase = get_supabase()
     res = supabase.table("clients").insert({"name": name}).execute()
     return res.data[0]["id"] if res.data else None
 
 
 def create_project_record(client_id: str, name: str, description: str = "") -> Optional[str]:
-    """Create a new project under a client. Returns the new project ID."""
     supabase = get_supabase()
     res = supabase.table("projects").insert({
         "client_id": client_id,
@@ -376,7 +324,6 @@ def create_project_record(client_id: str, name: str, description: str = "") -> O
 # ── Connection Health Check ───────────────────────────────────────────────────
 
 def check_connection() -> dict:
-    """Returns { connected: bool, client_count: int, resolution_count: int }"""
     try:
         supabase = get_supabase()
         clients = supabase.table("clients").select("id", count="exact").execute()
