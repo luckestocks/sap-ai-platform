@@ -55,7 +55,7 @@ def kb_search(
     query: str,
     project_id: str = None,
     client_id: str = None,
-    threshold: float = 0.70,
+    threshold: float = 0.60,
     match_count: int = 10,
 ) -> dict:
     """
@@ -68,7 +68,12 @@ def kb_search(
         kb_source  ('Global KB' | 'Client KB' | 'Project KB')
     """
     supabase  = get_supabase()
-    embedding = embed_text(query)
+    # Normalise query: strip leading SAP error codes (E0001, ME123 etc.)
+    # so "E0001 Partner profile not found" and "Partner profile not found"
+    # embed to the same vector space and match each other above threshold.
+    import re as _re
+    normalised_query = _re.sub(r'^\s*[A-Z]{1,5}\d{3,5}\s*', '', query).strip()
+    embedding = embed_text(normalised_query if normalised_query else query)
 
     all_results       = []
     levels_searched   = []
@@ -219,7 +224,16 @@ def save_resolution(
     Embeddings use error_message only — aligns stored and query embedding spaces.
     """
     supabase  = get_supabase()
-    embedding = embed_text(error_message)
+
+    # Normalise: strip leading SAP error codes before embedding
+    # so "E0001 Partner profile not found" and "Partner profile not found"
+    # produce identical embeddings and match each other in similarity search.
+    import re as _re
+    def _normalise(text: str) -> str:
+        cleaned = _re.sub(r'^\s*[A-Z]{1,5}\d{3,5}\s*', '', text).strip()
+        return cleaned if cleaned else text
+
+    embedding = embed_text(_normalise(error_message))
 
     _NULL_UUID = "00000000-0000-0000-0000-000000000000"
     has_project = client_id and project_id and client_id != _NULL_UUID and project_id != _NULL_UUID
@@ -266,7 +280,7 @@ def save_resolution(
             "t_codes":        t_codes or [],
             "load_phase":     load_phase,
             "time_to_resolve": time_to_resolve,
-            "embedding":      embed_text(anon["error_message"]),
+            "embedding":      embed_text(_normalise(anon["error_message"])),
         }
         kb_res = supabase.table("cross_client_kb").insert(kb_row).execute()
         kb_id = kb_res.data[0]["id"] if kb_res.data else None
