@@ -434,6 +434,17 @@ with st.expander("🔽 Filters", expanded=False):
     with f3:
         filter_stream = st.multiselect("Stream", STREAMS, default=[])
 
+    f4, f5, _ = st.columns(3)
+    with f4:
+        filter_status = st.multiselect("Status", STATUSES, default=[])
+    with f5:
+        # Build user list dynamically from actual issues
+        all_users = sorted(set(
+            [i["raised_by"] for i in all_issues if i.get("raised_by")]
+            + [i["claimed_by"] for i in all_issues if i.get("claimed_by")]
+        ))
+        filter_user = st.multiselect("Person", all_users, default=[])
+
 def apply_filters(issues: list) -> list:
     if filter_priority:
         issues = [i for i in issues if i["priority"] in filter_priority]
@@ -441,6 +452,12 @@ def apply_filters(issues: list) -> list:
         issues = [i for i in issues if i["issue_type"] in filter_type]
     if filter_stream:
         issues = [i for i in issues if i["stream"] in filter_stream]
+    if filter_status:
+        issues = [i for i in issues if i["status"] in filter_status]
+    if filter_user:
+        issues = [i for i in issues if
+                  i.get("raised_by") in filter_user or
+                  i.get("claimed_by") in filter_user]
     return issues
 
 # ── Screenshot dialog — triggered by 📎 button on any card ───────────────────
