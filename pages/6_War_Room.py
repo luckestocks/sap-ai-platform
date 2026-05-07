@@ -28,6 +28,16 @@ st.set_page_config(
 with open("components/styles.css") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
+# Force full opacity on all content — Streamlit dims column content
+# when no interactive widgets follow, making resolved cards look greyed out
+st.markdown("""
+<style>
+  [data-testid="column"] { opacity: 1 !important; }
+  [data-testid="column"] * { opacity: 1 !important; }
+  [data-testid="stVerticalBlock"] { opacity: 1 !important; }
+</style>
+""", unsafe_allow_html=True)
+
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -160,8 +170,15 @@ def render_issue_card(issue: dict, your_name: str):
         "P2 High":     "#f97316",
         "P3 Medium":   "#eab308",
     }
-    bg     = bg_map.get(priority, "#0f172a")
-    border = border_map.get(priority, "#334155")
+
+    # Resolved cards — use a consistent readable slate style regardless of priority
+    # Active priority colours are too dark and look "greyed out" in the resolved column
+    if status == "Resolved":
+        bg     = "#0f1f12"
+        border = "#22543d"
+    else:
+        bg     = bg_map.get(priority, "#0f172a")
+        border = border_map.get(priority, "#334155")
 
     # Time open
     time_open = fmt_duration(issue["raised_at"])
@@ -213,56 +230,75 @@ def render_issue_card(issue: dict, your_name: str):
         unsafe_allow_html=True,
     )
 
-    # Screenshot — 📎 button opens a native Streamlit dialog popup
-    if screenshot_data:
-        if st.button("📎 Screenshot", key=f"shot_{iid}", use_container_width=False):
-            st.session_state["view_screenshot_data"]  = screenshot_data
-            st.session_state["view_screenshot_title"] = issue["title"]
-            st.rerun()
-
     # Action buttons — Resolved issues have no actions
     if status == "Resolved":
+        # st.empty() acts as an invisible widget anchor — stops Streamlit from
+        # dimming the markdown card above it (Streamlit dims HTML-only blocks
+        # with no widget following them in the same column render tree)
+        st.empty()
         return
 
-    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
-
-    if status == "Open":
+    if screenshot_data:
+        btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
         with btn_col1:
-            if st.button("⚙️ Claim", key=f"claim_{iid}", use_container_width=True):
-                update_issue(iid, {
-                    "status":     "In Progress",
-                    "claimed_by": your_name,
-                    "claimed_at": now_utc(),
-                })
-                st.rerun()
+            if st.button("⚙️ Claim" if status == "Open" else ("↩️ Reopen" if status == "Blocked" else "✅ Resolve"),
+                         key=f"primary_{iid}", use_container_width=True):
+                if status == "Open":
+                    update_issue(iid, {"status": "In Progress", "claimed_by": your_name, "claimed_at": now_utc()})
+                    st.rerun()
+                elif status == "Blocked":
+                    update_issue(iid, {"status": "Open", "claimed_by": None, "claimed_at": None})
+                    st.rerun()
+                elif status == "In Progress":
+                    st.session_state["resolve_panel_id"]    = iid
+                    st.session_state["resolve_panel_title"] = issue["title"]
         with btn_col2:
-            if st.button("🚫 Block", key=f"block_{iid}", use_container_width=True):
-                update_issue(iid, {"status": "Blocked"})
+            if status in ("Open", "In Progress"):
+                if st.button("🚫 Block" if status == "In Progress" else "🚫 Block",
+                             key=f"secondary_{iid}", use_container_width=True):
+                    update_issue(iid, {"status": "Blocked"})
+                    st.rerun()
+            elif status == "Blocked":
+                if st.button("⚙️ Claim", key=f"secondary_{iid}", use_container_width=True):
+                    update_issue(iid, {"status": "In Progress", "claimed_by": your_name, "claimed_at": now_utc()})
+                    st.rerun()
+        with btn_col3:
+            if st.button("📎 Screenshot", key=f"shot_{iid}", use_container_width=True):
+                st.session_state["view_screenshot_data"]  = screenshot_data
+                st.session_state["view_screenshot_title"] = issue["title"]
                 st.rerun()
+    else:
+        btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
 
-    elif status == "In Progress":
-        with btn_col1:
-            if st.button("✅ Resolve", key=f"resolve_{iid}", use_container_width=True):
-                st.session_state["resolve_panel_id"] = iid
-                st.session_state["resolve_panel_title"] = issue["title"]
-        with btn_col2:
-            if st.button("🚫 Block", key=f"block2_{iid}", use_container_width=True):
-                update_issue(iid, {"status": "Blocked"})
-                st.rerun()
+        if status == "Open":
+            with btn_col1:
+                if st.button("⚙️ Claim", key=f"claim_{iid}", use_container_width=True):
+                    update_issue(iid, {"status": "In Progress", "claimed_by": your_name, "claimed_at": now_utc()})
+                    st.rerun()
+            with btn_col2:
+                if st.button("🚫 Block", key=f"block_{iid}", use_container_width=True):
+                    update_issue(iid, {"status": "Blocked"})
+                    st.rerun()
 
-    elif status == "Blocked":
-        with btn_col1:
-            if st.button("↩️ Reopen", key=f"reopen_{iid}", use_container_width=True):
-                update_issue(iid, {"status": "Open", "claimed_by": None, "claimed_at": None})
-                st.rerun()
-        with btn_col2:
-            if st.button("⚙️ Claim", key=f"claim2_{iid}", use_container_width=True):
-                update_issue(iid, {
-                    "status":     "In Progress",
-                    "claimed_by": your_name,
-                    "claimed_at": now_utc(),
-                })
-                st.rerun()
+        elif status == "In Progress":
+            with btn_col1:
+                if st.button("✅ Resolve", key=f"resolve_{iid}", use_container_width=True):
+                    st.session_state["resolve_panel_id"]    = iid
+                    st.session_state["resolve_panel_title"] = issue["title"]
+            with btn_col2:
+                if st.button("🚫 Block", key=f"block2_{iid}", use_container_width=True):
+                    update_issue(iid, {"status": "Blocked"})
+                    st.rerun()
+
+        elif status == "Blocked":
+            with btn_col1:
+                if st.button("↩️ Reopen", key=f"reopen_{iid}", use_container_width=True):
+                    update_issue(iid, {"status": "Open", "claimed_by": None, "claimed_at": None})
+                    st.rerun()
+            with btn_col2:
+                if st.button("⚙️ Claim", key=f"claim2_{iid}", use_container_width=True):
+                    update_issue(iid, {"status": "In Progress", "claimed_by": your_name, "claimed_at": now_utc()})
+                    st.rerun()
 
 
 # ── Page header ───────────────────────────────────────────────────────────────
