@@ -205,11 +205,79 @@ def render_issue_card(issue: dict, your_name: str):
         unsafe_allow_html=True,
     )
 
-    # Show screenshot if attached
+    # Show screenshot as lightbox — click thumbnail to open full-screen overlay
     if screenshot_data:
-        with st.expander("📸 Screenshot", expanded=False):
-            st.markdown(f'<img src="{screenshot_data}" style="max-width:100%;border-radius:6px;">',
-                        unsafe_allow_html=True)
+        import streamlit.components.v1 as components
+        lightbox_id = f"lb_{iid[:8]}"
+        components.html(
+            f"""
+            <style>
+              .lb-thumb-{lightbox_id} {{
+                max-width: 100%;
+                max-height: 120px;
+                object-fit: cover;
+                border-radius: 6px;
+                cursor: zoom-in;
+                border: 1px solid #334155;
+                display: block;
+                margin-top: 4px;
+              }}
+              .lb-overlay-{lightbox_id} {{
+                display: none;
+                position: fixed;
+                top: 0; left: 0;
+                width: 100vw; height: 100vh;
+                background: rgba(0,0,0,0.92);
+                z-index: 99999;
+                justify-content: center;
+                align-items: center;
+                cursor: zoom-out;
+              }}
+              .lb-overlay-{lightbox_id}.active {{
+                display: flex;
+              }}
+              .lb-overlay-{lightbox_id} img {{
+                max-width: 92vw;
+                max-height: 92vh;
+                border-radius: 8px;
+                box-shadow: 0 0 60px rgba(0,0,0,0.8);
+                object-fit: contain;
+              }}
+              .lb-close-{lightbox_id} {{
+                position: fixed;
+                top: 18px; right: 24px;
+                color: #fff;
+                font-size: 2rem;
+                cursor: pointer;
+                z-index: 100000;
+                line-height: 1;
+              }}
+            </style>
+
+            <div style="font-size:0.72rem;color:#64748b;margin-bottom:4px;">
+              📸 Screenshot — click to view full size
+            </div>
+            <img
+              class="lb-thumb-{lightbox_id}"
+              src="{screenshot_data}"
+              onclick="document.getElementById('overlay-{lightbox_id}').classList.add('active')"
+            />
+
+            <div
+              id="overlay-{lightbox_id}"
+              class="lb-overlay-{lightbox_id}"
+              onclick="this.classList.remove('active')"
+            >
+              <span
+                class="lb-close-{lightbox_id}"
+                onclick="document.getElementById('overlay-{lightbox_id}').classList.remove('active')"
+              >✕</span>
+              <img src="{screenshot_data}" onclick="event.stopPropagation()" />
+            </div>
+            """,
+            height=145,
+            scrolling=False,
+        )
 
     # Action buttons — Resolved issues have no actions
     if status == "Resolved":
