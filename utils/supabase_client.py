@@ -335,3 +335,44 @@ def check_connection() -> dict:
         }
     except Exception as e:
         return {"connected": False, "error": str(e)}
+
+
+# ── Persistent Daily Groq Usage ───────────────────────────────────────────────
+# Stored in app_state table (key='groq_usage') so it survives browser refreshes.
+# Falls back to 0 gracefully if the table doesn't exist yet.
+
+def get_groq_usage(today: str) -> int:
+    """
+    Return today's Groq call count from Supabase.
+    If the stored date doesn't match today, returns 0 (new day = fresh counter).
+    """
+    try:
+        supabase = get_supabase()
+        res = supabase.table("app_state").select("value").eq("key", "groq_usage").execute()
+        if res.data:
+            stored = res.data[0]["value"]
+            if stored.get("date") == today:
+                return int(stored.get("calls", 0))
+        return 0
+    except Exception:
+        return 0
+
+
+def increment_groq_usage(today: str, increment: int = 1) -> int:
+    """
+    Add `increment` to today's Groq call count in Supabase.
+    Returns the new total call count.
+    Uses upsert so it works whether the row exists or not.
+    """
+    try:
+        supabase = get_supabase()
+        current   = get_groq_usage(today)
+        new_count = current + increment
+        supabase.table("app_state").upsert({
+            "key":        "groq_usage",
+            "value":      {"date": today, "calls": new_count},
+            "updated_at": "now()",
+        }).execute()
+        return new_count
+    except Exception:
+        return 0
