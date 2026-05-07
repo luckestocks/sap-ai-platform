@@ -234,6 +234,10 @@ def render_issue_card(issue: dict, your_name: str):
                 st.rerun()
 
     # Resolve form — inline
+    # Clear the flag immediately if the issue is already resolved (survives rerun)
+    if status == "Resolved":
+        st.session_state.pop(f"resolving_{iid}", None)
+
     if st.session_state.get(f"resolving_{iid}"):
         with st.form(key=f"resolve_form_{iid}"):
             notes = st.text_area("Resolution notes *", height=80,
