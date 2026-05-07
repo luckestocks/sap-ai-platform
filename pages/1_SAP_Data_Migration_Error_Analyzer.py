@@ -459,20 +459,24 @@ if diagnose_btn:
             render_error_type_badge(error_type)
             st.markdown("")
 
-            # Step 3: Additive KB search — use original error_text for embedding
-            # (raw error is better for vector similarity than the structured version)
+            # Step 3: Additive KB search with canonicalisation + reranking
+            # Uses 2 extra LLM calls: 1 for canonicalise query, 1 for reranking candidates
             rag_result  = {"level": 4, "label": "LLM Fallback", "results": [], "summary_label": "LLM Fallback"}
             rag_context = ""
             source_level  = "l4"
             source_detail = ""
 
             if not llm_only:
-                with st.spinner("🔍 Searching knowledge base..."):
+                with st.spinner("🔍 Searching and ranking knowledge base..."):
                     rag_result = kb_search(
-                        query=error_text,   # raw text for embedding search
+                        query=error_text,
                         project_id=active_project_id,
                         client_id=active_client_id,
+                        llm_fn=query_llm,   # enables LLM canonicalisation + reranking
                     )
+                # Account for the 2 LLM calls used inside kb_search (canonicalise + rerank)
+                new_calls = increment_groq_usage(today_utc, increment=2)
+                st.session_state["groq_calls"] = new_calls
 
                 results       = rag_result.get("results", [])
                 summary_label = rag_result.get("summary_label", "Global KB")
