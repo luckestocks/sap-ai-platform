@@ -431,22 +431,23 @@ st.divider()
 # ── Log new issue ─────────────────────────────────────────────────────────────
 with st.expander("➕ Log New Issue", expanded=len(all_issues) == 0):
 
-    # Paste screenshot — must live OUTSIDE st.form()
-    from streamlit_paste_button import paste_image_button as pbutton
-    import io as _io
-    import base64
+    # Screenshot attachment — file uploader preserves full resolution
+    # (paste_image_button downsamples via browser canvas — not suitable for readable screenshots)
+    st.caption("📸 Attach a screenshot (optional) — Win+Shift+S saves to Downloads, then upload below")
 
-    st.caption("📋 Attach a screenshot (optional) — Win+Shift+S to snip, then click below and Ctrl+V")
-    paste_result = pbutton(
-        label="📋 Paste Screenshot",
-        background_color="#1E3A5F",
-        hover_background_color="#1d6fa5",
-        key="wr_paste_screenshot",
+    uploaded_shot = st.file_uploader(
+        "Upload screenshot",
+        type=["png", "jpg", "jpeg", "webp"],
+        key="wr_screenshot_upload",
+        label_visibility="collapsed",
     )
-    if paste_result.image_data is not None:
-        st.session_state["wr_screenshot"] = paste_result.image_data
-    if st.session_state.get("wr_screenshot"):
-        st.image(st.session_state["wr_screenshot"], caption="Screenshot attached", width=400)
+    if uploaded_shot:
+        from PIL import Image as PILImage
+        img = PILImage.open(uploaded_shot)
+        st.session_state["wr_screenshot"] = img
+        st.image(img, caption="Screenshot attached — will be saved with issue", use_column_width=True)
+    elif st.session_state.get("wr_screenshot"):
+        st.image(st.session_state["wr_screenshot"], caption="Screenshot attached", use_column_width=True)
         if st.button("✖ Remove screenshot", key="wr_remove_screenshot"):
             st.session_state.pop("wr_screenshot", None)
             st.rerun()
@@ -480,13 +481,14 @@ with st.expander("➕ Log New Issue", expanded=len(all_issues) == 0):
             desc_text = ni_desc.strip()
             if st.session_state.get("wr_screenshot"):
                 try:
+                    import io as _io
+                    import base64
                     buf = _io.BytesIO()
                     st.session_state["wr_screenshot"].save(buf, format="PNG")
                     b64 = base64.b64encode(buf.getvalue()).decode()
-                    # Store marker so card renderer can detect and show it
                     desc_text = (desc_text + "\n" if desc_text else "") + f"[SCREENSHOT:data:image/png;base64,{b64}]"
                 except Exception:
-                    pass  # screenshot encode failed — log without it
+                    pass
 
             ok = create_issue({
                 "title":         ni_title.strip(),
