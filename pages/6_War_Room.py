@@ -193,7 +193,10 @@ def render_issue_card(issue: dict, your_name: str):
         unsafe_allow_html=True,
     )
 
-    # Action buttons — shown based on current status
+    # Action buttons — Resolved issues have no actions
+    if status == "Resolved":
+        return
+
     btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
 
     if status == "Open":
@@ -476,153 +479,139 @@ with col_resolved:
 
 # ── Export ────────────────────────────────────────────────────────────────────
 st.divider()
-export_col1, export_col2 = st.columns([3, 1])
-with export_col1:
+
+import io
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
+
+def build_export_excel(issues: list) -> bytes:
+    """Build the War Room Excel export. Returns bytes ready for download."""
+    wb  = Workbook()
+    ws1 = wb.active
+    ws1.title = "Issue Log"
+
+    headers = [
+        "Issue #", "Priority", "Status", "Type", "Stream",
+        "Title", "Description", "Raised By", "Raised At",
+        "Claimed By", "Claimed At", "Resolved By", "Resolved At",
+        "Time to Resolve", "Resolution Notes", "Phase"
+    ]
+    header_fill = PatternFill("solid", fgColor="1E3A5F")
+    header_font = Font(bold=True, color="93C5FD", size=10)
+    for col, h in enumerate(headers, 1):
+        cell = ws1.cell(row=1, column=col, value=h)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    priority_fills = {
+        "P1 Critical": PatternFill("solid", fgColor="7F1D1D"),
+        "P2 High":     PatternFill("solid", fgColor="7C2D12"),
+        "P3 Medium":   PatternFill("solid", fgColor="713F12"),
+    }
+
+    def fmt_ts(ts):
+        if not ts:
+            return ""
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            return dt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return ts
+
+    sorted_issues = sort_issues(issues)
+    for row_num, issue in enumerate(sorted_issues, 2):
+        ttr = fmt_duration(issue["raised_at"], issue["resolved_at"]) if issue.get("resolved_at") else ""
+        row_data = [
+            row_num - 1,
+            issue["priority"],
+            issue["status"],
+            issue["issue_type"],
+            issue["stream"],
+            issue["title"],
+            issue.get("description") or "",
+            issue["raised_by"],
+            fmt_ts(issue["raised_at"]),
+            issue.get("claimed_by") or "",
+            fmt_ts(issue.get("claimed_at")),
+            issue.get("resolved_by") or "",
+            fmt_ts(issue.get("resolved_at")),
+            ttr,
+            issue.get("resolution_notes") or "",
+            issue.get("cutover_phase") or "",
+        ]
+        fill = priority_fills.get(issue["priority"], PatternFill("solid", fgColor="0F172A"))
+        for col, val in enumerate(row_data, 1):
+            cell = ws1.cell(row=row_num, column=col, value=val)
+            cell.font = Font(color="E2E8F0", size=9)
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.fill = fill
+
+    col_widths = [8, 14, 14, 14, 14, 40, 35, 14, 18, 14, 18, 14, 18, 14, 40, 16]
+    for i, w in enumerate(col_widths, 1):
+        ws1.column_dimensions[get_column_letter(i)].width = w
+    ws1.row_dimensions[1].height = 20
+    ws1.freeze_panes = "A2"
+
+    # Sheet 2: Summary
+    ws2 = wb.create_sheet("Summary")
+    ws2["A1"] = "War Room Summary"
+    ws2["A1"].font = Font(bold=True, size=14, color="93C5FD")
+
+    summary_rows = [
+        ("", ""),
+        ("Total Issues",  len(issues)),
+        ("Open",          sum(1 for i in issues if i["status"] == "Open")),
+        ("In Progress",   sum(1 for i in issues if i["status"] == "In Progress")),
+        ("Blocked",       sum(1 for i in issues if i["status"] == "Blocked")),
+        ("Resolved",      sum(1 for i in issues if i["status"] == "Resolved")),
+        ("", ""),
+        ("By Priority", ""),
+        ("P1 Critical",   sum(1 for i in issues if i["priority"] == "P1 Critical")),
+        ("P2 High",       sum(1 for i in issues if i["priority"] == "P2 High")),
+        ("P3 Medium",     sum(1 for i in issues if i["priority"] == "P3 Medium")),
+        ("", ""),
+        ("By Stream", ""),
+    ]
+    for stream in STREAMS:
+        count = sum(1 for i in issues if i["stream"] == stream)
+        if count:
+            summary_rows.append((stream, count))
+
+    for r, (label, value) in enumerate(summary_rows, 3):
+        ws2.cell(row=r, column=1, value=label).font = Font(color="94A3B8", size=10, bold=(value == ""))
+        if value != "":
+            ws2.cell(row=r, column=2, value=value).font = Font(color="E2E8F0", size=10, bold=True)
+
+    ws2.column_dimensions["A"].width = 20
+    ws2.column_dimensions["B"].width = 12
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+exp_col1, exp_col2 = st.columns([3, 1])
+with exp_col1:
     st.markdown("### 📥 Export War Room Log")
     st.caption("Download the full issue log as Excel — use this as your post-cutover resolution report.")
-
-with export_col2:
-    if st.button("📥 Export Excel", use_container_width=True, type="primary"):
-        if not all_issues:
-            st.warning("No issues to export.")
-        else:
-            import io
-            from openpyxl import Workbook
-            from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-            from openpyxl.utils import get_column_letter
-
-            wb = Workbook()
-
-            # ── Sheet 1: Full Issue Log ───────────────────────────────────────
-            ws1 = wb.active
-            ws1.title = "Issue Log"
-
-            headers = [
-                "Issue #", "Priority", "Status", "Type", "Stream",
-                "Title", "Description", "Raised By", "Raised At",
-                "Claimed By", "Claimed At", "Resolved By", "Resolved At",
-                "Time to Resolve", "Resolution Notes", "Phase"
-            ]
-
-            # Header row styling
-            header_fill = PatternFill("solid", fgColor="1E3A5F")
-            header_font = Font(bold=True, color="93C5FD", size=10)
-            for col, h in enumerate(headers, 1):
-                cell = ws1.cell(row=1, column=col, value=h)
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal="center", vertical="center")
-
-            # Priority row colours
-            priority_fills = {
-                "P1 Critical": PatternFill("solid", fgColor="7F1D1D"),
-                "P2 High":     PatternFill("solid", fgColor="7C2D12"),
-                "P3 Medium":   PatternFill("solid", fgColor="713F12"),
-            }
-            status_fills = {
-                "Open":        PatternFill("solid", fgColor="1E3A5F"),
-                "In Progress": PatternFill("solid", fgColor="1A2E1A"),
-                "Resolved":    PatternFill("solid", fgColor="1A2A1A"),
-                "Blocked":     PatternFill("solid", fgColor="3B1111"),
-            }
-
-            sorted_all = sort_issues(all_issues)
-            for row_num, issue in enumerate(sorted_all, 2):
-                ttr = ""
-                if issue.get("raised_at") and issue.get("resolved_at"):
-                    ttr = fmt_duration(issue["raised_at"], issue["resolved_at"])
-
-                def fmt_ts(ts):
-                    if not ts:
-                        return ""
-                    try:
-                        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                        return dt.strftime("%Y-%m-%d %H:%M")
-                    except Exception:
-                        return ts
-
-                row_data = [
-                    row_num - 1,
-                    issue["priority"],
-                    issue["status"],
-                    issue["issue_type"],
-                    issue["stream"],
-                    issue["title"],
-                    issue.get("description") or "",
-                    issue["raised_by"],
-                    fmt_ts(issue["raised_at"]),
-                    issue.get("claimed_by") or "",
-                    fmt_ts(issue.get("claimed_at")),
-                    issue.get("resolved_by") or "",
-                    fmt_ts(issue.get("resolved_at")),
-                    ttr,
-                    issue.get("resolution_notes") or "",
-                    issue.get("cutover_phase") or "",
-                ]
-                for col, val in enumerate(row_data, 1):
-                    cell = ws1.cell(row=row_num, column=col, value=val)
-                    cell.font = Font(color="E2E8F0", size=9)
-                    cell.alignment = Alignment(vertical="top", wrap_text=True)
-                    # Row background by priority
-                    fill = priority_fills.get(issue["priority"],
-                           PatternFill("solid", fgColor="0F172A"))
-                    cell.fill = fill
-
-            # Column widths
-            col_widths = [8, 14, 14, 14, 14, 40, 35, 14, 18, 14, 18, 14, 18, 14, 40, 16]
-            for i, w in enumerate(col_widths, 1):
-                ws1.column_dimensions[get_column_letter(i)].width = w
-
-            ws1.row_dimensions[1].height = 20
-            ws1.freeze_panes = "A2"
-
-            # ── Sheet 2: Summary ──────────────────────────────────────────────
-            ws2 = wb.create_sheet("Summary")
-            ws2["A1"] = "War Room Summary"
-            ws2["A1"].font = Font(bold=True, size=14, color="93C5FD")
-
-            summary_rows = [
-                ("", ""),
-                ("Total Issues",       len(all_issues)),
-                ("Open",               len(open_issues)),
-                ("In Progress",        len(inprog_issues)),
-                ("Blocked",            len(blocked_issues)),
-                ("Resolved",           len(resolved_issues)),
-                ("", ""),
-                ("By Priority", ""),
-                ("P1 Critical",  sum(1 for i in all_issues if i["priority"] == "P1 Critical")),
-                ("P2 High",      sum(1 for i in all_issues if i["priority"] == "P2 High")),
-                ("P3 Medium",    sum(1 for i in all_issues if i["priority"] == "P3 Medium")),
-                ("", ""),
-                ("By Stream", ""),
-            ]
-            for stream in STREAMS:
-                count = sum(1 for i in all_issues if i["stream"] == stream)
-                if count:
-                    summary_rows.append((stream, count))
-
-            for r, (label, value) in enumerate(summary_rows, 3):
-                ws2.cell(row=r, column=1, value=label).font = Font(color="94A3B8", size=10, bold=(value == ""))
-                if value != "":
-                    ws2.cell(row=r, column=2, value=value).font = Font(color="E2E8F0", size=10, bold=True)
-
-            ws2.column_dimensions["A"].width = 20
-            ws2.column_dimensions["B"].width = 12
-
-            # ── Export ────────────────────────────────────────────────────────
-            buf = io.BytesIO()
-            wb.save(buf)
-            buf.seek(0)
-
-            phase_tag = cutover_phase.replace(" ", "_")
-            filename  = f"WarRoom_{phase_tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
-
-            st.download_button(
-                label="📥 Download Now",
-                data=buf,
-                file_name=filename,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+with exp_col2:
+    if not all_issues:
+        st.button("📥 Export Excel", disabled=True, use_container_width=True,
+                  help="No issues to export yet.")
+    else:
+        phase_tag = cutover_phase.replace(" ", "_")
+        filename  = f"WarRoom_{phase_tag}_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx"
+        st.download_button(
+            label="📥 Export Excel",
+            data=build_export_excel(all_issues),
+            file_name=filename,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary",
+        )
 
 # ── Auto-refresh ──────────────────────────────────────────────────────────────
 if auto_refresh:
