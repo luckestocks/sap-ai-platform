@@ -64,6 +64,7 @@
 .tool-card--blue  { border-left: 3px solid var(--sap-blue); }
 .tool-card--green { border-left: 3px solid var(--sap-green); }
 .tool-card--purple{ border-left: 3px solid var(--sap-purple); }
+.tool-card--orange{ border-left: 3px solid var(--sap-orange); }
 
 .tool-icon { font-size: 2rem; margin-bottom: 0.75rem; }
 .tool-card h3 { margin: 0 0 0.5rem; font-weight: 600; font-size: 1.1rem; }
