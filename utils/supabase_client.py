@@ -90,10 +90,13 @@ def kb_search(
     """
     supabase = get_supabase()
 
-    # Embed raw query — matches existing entries which were all embedded raw.
-    # Semantic variation (plain English, different phrasing) is handled by
-    # the LLM reranker in Stage 2, not by the vector search in Stage 1.
-    embedding = embed_text(query)
+    # Pass 1: embed raw query — matches entries stored with raw embeddings
+    raw_embedding = embed_text(query)
+
+    # Pass 2: embed canonical query — matches entries stored with canonical embeddings
+    # Catches plain English, grammar variations, different phrasing of same error
+    canonical_query = canonicalise_error(query, llm_fn=llm_fn)
+    canonical_embedding = embed_text(canonical_query)
 
     all_results       = []
     levels_searched   = []
@@ -111,16 +114,38 @@ def kb_search(
                 r["kb_source"] = kb_source
                 all_results.append(r)
 
-    # L3 — Cross-client Global KB (always searched)
+    def _lazy_backfill_canonical(table: str, row_id: str, error_message: str):
+        """
+        If a record has no embedding_canonical, compute and store it now.
+        Called after Pass 1 finds records — ensures all touched records
+        get canonical embeddings without a separate migration script.
+        """
+        try:
+            canonical = canonicalise_error(error_message)
+            emb = embed_text(canonical)
+            supabase.table(table).update({
+                "embedding_canonical": emb
+            }).eq("id", row_id).execute()
+        except Exception:
+            pass  # Backfill failure is non-critical
+
+    # ── Pass 1: Raw embedding search ─────────────────────────────────────────
+    # Catches exact and near-exact SAP error text matches
+
+    # L3 — Cross-client Global KB
     try:
         res = supabase.rpc("match_cross_client_kb", {
-            "query_embedding": embedding,
+            "query_embedding": raw_embedding,
             "match_threshold": threshold,
             "match_count": match_count,
         }).execute()
         if res.data:
             _merge(res.data, "Global KB")
             levels_searched.append("L3 Global")
+            # Lazy backfill: populate embedding_canonical for records that don't have it
+            for r in res.data:
+                if not r.get("embedding_canonical"):
+                    _lazy_backfill_canonical("cross_client_kb", r["id"], r.get("error_message",""))
     except Exception:
         pass
 
@@ -128,7 +153,7 @@ def kb_search(
     if project_id:
         try:
             res = supabase.rpc("match_project_errors", {
-                "query_embedding": embedding,
+                "query_embedding": raw_embedding,
                 "match_project_id": project_id,
                 "match_threshold": threshold,
                 "match_count": match_count,
@@ -137,6 +162,9 @@ def kb_search(
                 _merge(res.data, "Project KB")
                 if "L1 Project" not in levels_searched:
                     levels_searched.append("L1 Project")
+                for r in res.data:
+                    if not r.get("embedding_canonical"):
+                        _lazy_backfill_canonical("error_resolutions", r["id"], r.get("error_message",""))
         except Exception:
             pass
 
@@ -144,7 +172,7 @@ def kb_search(
     if client_id and project_id:
         try:
             res = supabase.rpc("match_client_errors", {
-                "query_embedding": embedding,
+                "query_embedding": raw_embedding,
                 "match_client_id": client_id,
                 "exclude_project_id": project_id,
                 "match_threshold": threshold,
@@ -154,12 +182,15 @@ def kb_search(
                 _merge(res.data, "Client KB")
                 if "L2 Client" not in levels_searched:
                     levels_searched.append("L2 Client")
+                for r in res.data:
+                    if not r.get("embedding_canonical"):
+                        _lazy_backfill_canonical("error_resolutions", r["id"], r.get("error_message",""))
         except Exception:
             pass
     elif client_id:
         try:
             res = supabase.rpc("match_client_errors", {
-                "query_embedding": embedding,
+                "query_embedding": raw_embedding,
                 "match_client_id": client_id,
                 "exclude_project_id": "00000000-0000-0000-0000-000000000000",
                 "match_threshold": threshold,
@@ -169,8 +200,69 @@ def kb_search(
                 _merge(res.data, "Client KB")
                 if "L2 Client" not in levels_searched:
                     levels_searched.append("L2 Client")
+                for r in res.data:
+                    if not r.get("embedding_canonical"):
+                        _lazy_backfill_canonical("error_resolutions", r["id"], r.get("error_message",""))
         except Exception:
             pass
+
+    # ── Pass 2: Canonical embedding search ───────────────────────────────────
+    # Catches plain English descriptions, grammar variations, different phrasing
+    # Only runs if canonical query differs from raw (no point running twice for exact SAP text)
+
+    if canonical_query.strip().lower() != query.strip().lower():
+        try:
+            res = supabase.rpc("match_cross_client_kb_canonical", {
+                "query_embedding": canonical_embedding,
+                "match_threshold": threshold,
+                "match_count": match_count,
+            }).execute()
+            if res.data:
+                _merge(res.data, "Global KB")
+                if "L3 Global (semantic)" not in levels_searched:
+                    levels_searched.append("L3 Global (semantic)")
+        except Exception:
+            pass
+
+        if project_id:
+            try:
+                res = supabase.rpc("match_project_errors_canonical", {
+                    "query_embedding": canonical_embedding,
+                    "match_project_id": project_id,
+                    "match_threshold": threshold,
+                    "match_count": match_count,
+                }).execute()
+                if res.data:
+                    _merge(res.data, "Project KB")
+            except Exception:
+                pass
+
+        if client_id and project_id:
+            try:
+                res = supabase.rpc("match_client_errors_canonical", {
+                    "query_embedding": canonical_embedding,
+                    "match_client_id": client_id,
+                    "exclude_project_id": project_id,
+                    "match_threshold": threshold,
+                    "match_count": match_count,
+                }).execute()
+                if res.data:
+                    _merge(res.data, "Client KB")
+            except Exception:
+                pass
+        elif client_id:
+            try:
+                res = supabase.rpc("match_client_errors_canonical", {
+                    "query_embedding": canonical_embedding,
+                    "match_client_id": client_id,
+                    "exclude_project_id": "00000000-0000-0000-0000-000000000000",
+                    "match_threshold": threshold,
+                    "match_count": match_count,
+                }).execute()
+                if res.data:
+                    _merge(res.data, "Client KB")
+            except Exception:
+                pass
 
     all_results.sort(key=lambda r: r.get("similarity", 0), reverse=True)
 
@@ -283,10 +375,11 @@ def save_resolution(
     """
     supabase  = get_supabase()
 
-    # Embed raw error_message only — no canonicalisation at save time.
-    # The reranker (LLM) handles semantic variation at search time.
-    # Canonicalising at save would break existing entries which were embedded raw.
-    embedding = embed_text(error_message)
+    # Embed raw error_message — aligns with existing stored embeddings (Pass 1 search)
+    embedding     = embed_text(error_message)
+    # Embed canonical summary — for semantic/plain-English search (Pass 2 search)
+    canonical_msg = canonicalise_error(error_message)  # regex fallback, no LLM
+    embedding_canonical = embed_text(canonical_msg)
 
     _NULL_UUID = "00000000-0000-0000-0000-000000000000"
     has_project = client_id and project_id and client_id != _NULL_UUID and project_id != _NULL_UUID
@@ -294,20 +387,20 @@ def save_resolution(
     resolution_id = None
 
     if has_project:
-        # Full save: error_resolutions (L1/L2) + cross_client_kb (L3)
         resolution_row = {
-            "client_id":      client_id,
-            "project_id":     project_id,
-            "error_type":     error_type,
-            "error_code":     error_code,
-            "error_message":  error_message,
-            "root_cause":     root_cause,
-            "fix_steps":      fix_steps,
-            "t_codes":        t_codes or [],
-            "load_phase":     load_phase,
-            "time_to_resolve": time_to_resolve,
-            "embedding":      embedding,
-            "created_by":     created_by,
+            "client_id":           client_id,
+            "project_id":          project_id,
+            "error_type":          error_type,
+            "error_code":          error_code,
+            "error_message":       error_message,
+            "root_cause":          root_cause,
+            "fix_steps":           fix_steps,
+            "t_codes":             t_codes or [],
+            "load_phase":          load_phase,
+            "time_to_resolve":     time_to_resolve,
+            "embedding":           embedding,
+            "embedding_canonical": embedding_canonical,
+            "created_by":          created_by,
         }
         try:
             res = supabase.table("error_resolutions").insert(resolution_row).execute()
@@ -315,7 +408,7 @@ def save_resolution(
         except Exception:
             resolution_id = None
 
-    # Always push to cross_client_kb (L3) — with or without a project
+    # Always push to cross_client_kb (L3)
     kb_id = None
     try:
         anon = anonymise_for_kb(
@@ -323,17 +416,19 @@ def save_resolution(
             root_cause=root_cause,
             fix_steps=fix_steps,
         )
+        anon_canonical = canonicalise_error(anon["error_message"])
         kb_row = {
-            "source_id":      resolution_id,   # None is fine — nullable FK
-            "error_type":     error_type,
-            "error_code":     error_code,
-            "error_message":  anon["error_message"],
-            "root_cause":     anon["root_cause"],
-            "fix_steps":      anon["fix_steps"],
-            "t_codes":        t_codes or [],
-            "load_phase":     load_phase,
-            "time_to_resolve": time_to_resolve,
-            "embedding":      embed_text(anon["error_message"]),
+            "source_id":           resolution_id,
+            "error_type":          error_type,
+            "error_code":          error_code,
+            "error_message":       anon["error_message"],
+            "root_cause":          anon["root_cause"],
+            "fix_steps":           anon["fix_steps"],
+            "t_codes":             t_codes or [],
+            "load_phase":          load_phase,
+            "time_to_resolve":     time_to_resolve,
+            "embedding":           embed_text(anon["error_message"]),
+            "embedding_canonical": embed_text(anon_canonical),
         }
         kb_res = supabase.table("cross_client_kb").insert(kb_row).execute()
         kb_id = kb_res.data[0]["id"] if kb_res.data else None
@@ -344,12 +439,6 @@ def save_resolution(
         "resolution_id": resolution_id,
         "kb_id":         kb_id,
         "status":        "saved" if (resolution_id or kb_id) else "error",
-    }
-
-    return {
-        "resolution_id": resolution_id,
-        "kb_id": kb_id,
-        "status": "saved" if resolution_id else "error",
     }
 
 
