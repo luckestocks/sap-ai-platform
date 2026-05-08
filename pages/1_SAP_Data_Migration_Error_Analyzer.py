@@ -106,13 +106,20 @@ def render_kb_results(rag_results: list, rag_label: str):
             fix        = r.get("fix_steps") or "—"
 
             # ── Compact metadata row ──────────────────────────────────────────
+            relevance = r.get("relevance_score")
+            match_display = (
+                f"{relevance}/100 relevance" if relevance is not None
+                else f"{similarity:.0%} match"
+            )
+            match_bg = "#1a2e1a" if (relevance or 0) >= 70 or similarity >= 0.8 else "#1a1a2e"
+            match_fg = "#4ade80" if (relevance or 0) >= 70 or similarity >= 0.8 else "#93c5fd"
             st.markdown(
                 f'<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;'
                 f'margin-bottom:4px;margin-top:{"0" if i == 1 else "10px"};">'
                 f'<span style="color:#94a3b8;font-size:0.75rem;font-weight:700;'
                 f'margin-right:6px;">#{i}</span>'
                 f'{_source_badge(kb_source)}'
-                f'{_pill("match", f"{similarity:.0%}", bg="#1a2e1a", fg="#4ade80")}'
+                f'{_pill("match", match_display, bg=match_bg, fg=match_fg)}'
                 f'{_pill("phase", phase)}'
                 f'{_pill("type", etype)}'
                 f'{_pill("client", client)}'
