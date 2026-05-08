@@ -70,9 +70,9 @@ def kb_search(
     query: str,
     project_id: str = None,
     client_id: str = None,
-    threshold: float = 0.40,   # Low — canonicalisation handles precision; reranker handles recall
-    match_count: int = 15,     # Fetch more candidates for reranker to work with
-    llm_fn=None,               # Pass query_llm from llm_router for canonicalisation + reranking
+    threshold: float = 0.40,   # Low threshold — reranker filters false positives
+    match_count: int = 15,     # More candidates for reranker to work with
+    llm_fn=None,
 ) -> dict:
     """
     Two-stage KB search:
@@ -90,9 +90,10 @@ def kb_search(
     """
     supabase = get_supabase()
 
-    # Stage 1: Canonicalise query before embedding
-    canonical_query = canonicalise_error(query, llm_fn=llm_fn)
-    embedding = embed_text(canonical_query)
+    # Embed raw query — matches existing entries which were all embedded raw.
+    # Semantic variation (plain English, different phrasing) is handled by
+    # the LLM reranker in Stage 2, not by the vector search in Stage 1.
+    embedding = embed_text(query)
 
     all_results       = []
     levels_searched   = []
@@ -287,9 +288,10 @@ def save_resolution(
     """
     supabase  = get_supabase()
 
-    # Canonicalise error_message before embedding.
-    canonical_msg = canonicalise_error(error_message)  # regex fallback (no LLM at save time)
-    embedding = embed_text(canonical_msg)
+    # Embed raw error_message only — no canonicalisation at save time.
+    # The reranker (LLM) handles semantic variation at search time.
+    # Canonicalising at save would break existing entries which were embedded raw.
+    embedding = embed_text(error_message)
 
     _NULL_UUID = "00000000-0000-0000-0000-000000000000"
     has_project = client_id and project_id and client_id != _NULL_UUID and project_id != _NULL_UUID
@@ -336,7 +338,7 @@ def save_resolution(
             "t_codes":        t_codes or [],
             "load_phase":     load_phase,
             "time_to_resolve": time_to_resolve,
-            "embedding":      embed_text(canonicalise_error(anon["error_message"])),
+            "embedding":      embed_text(anon["error_message"]),
         }
         kb_res = supabase.table("cross_client_kb").insert(kb_row).execute()
         kb_id = kb_res.data[0]["id"] if kb_res.data else None
