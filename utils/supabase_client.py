@@ -70,7 +70,7 @@ def kb_search(
     query: str,
     project_id: str = None,
     client_id: str = None,
-    threshold: float = 0.30,   # Low threshold — reranker filters false positives
+    threshold: float = 0.65,   # Now works correctly — RPC uses plpgsql which handles vector comparisons properly
     match_count: int = 15,     # More candidates for reranker to work with
     llm_fn=None,
 ) -> dict:
@@ -174,9 +174,8 @@ def kb_search(
 
     all_results.sort(key=lambda r: r.get("similarity", 0), reverse=True)
 
-    # Stage 2: LLM reranking — scores results but does NOT filter them out
-    # All vector results above threshold are shown; reranker just adds a relevance_score
-    # field for display. This prevents the LLM from incorrectly dropping valid matches.
+    # Stage 2: LLM reranking — scores AND filters results
+    # Vector search at 0.65 handles obvious mismatches; reranker handles edge cases
     if all_results and llm_fn is not None:
         try:
             candidates_text = ""
@@ -202,15 +201,16 @@ def kb_search(
             match = _re.search(r'\[[\d,\s]+\]', raw_scores)
             if match:
                 scores = json.loads(match.group())
+                reranked = []
                 for i, r in enumerate(all_results):
-                    r["relevance_score"] = scores[i] if i < len(scores) else None
-                # Sort by relevance score if available, else by similarity
-                all_results.sort(
-                    key=lambda r: r.get("relevance_score") or (r.get("similarity", 0) * 100),
-                    reverse=True
-                )
+                    score = scores[i] if i < len(scores) else 0
+                    r["relevance_score"] = score
+                    if score >= 40:   # Filter anything the reranker considers unrelated
+                        reranked.append(r)
+                reranked.sort(key=lambda r: r.get("relevance_score", 0), reverse=True)
+                all_results = reranked
         except Exception:
-            pass  # Reranking failed — keep vector results sorted by similarity
+            pass  # Reranking failed — keep all vector results
 
     if project_id and client_id:
         summary_label = "Project + Client + Global KB"
