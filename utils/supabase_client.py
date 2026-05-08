@@ -174,7 +174,9 @@ def kb_search(
 
     all_results.sort(key=lambda r: r.get("similarity", 0), reverse=True)
 
-    # Stage 2: LLM reranking
+    # Stage 2: LLM reranking — scores results but does NOT filter them out
+    # All vector results above threshold are shown; reranker just adds a relevance_score
+    # field for display. This prevents the LLM from incorrectly dropping valid matches.
     if all_results and llm_fn is not None:
         try:
             candidates_text = ""
@@ -187,16 +189,9 @@ def kb_search(
             rerank_prompt = (
                 f"You are an SAP expert. Score each candidate resolution 0-100 for relevance "
                 f"to the query error. Focus on functional similarity — same root cause = high score "
-                f"even if the wording differs completely.\n\n"
-                f"Scoring guide:\n"
-                f"  90-100 = same error, same fix\n"
-                f"  70-89  = same error, different fix approach\n"
-                f"  50-69  = related error, partially applicable fix\n"
-                f"  20-49  = loosely related\n"
-                f"  0-19   = unrelated\n\n"
-                f"IMPORTANT: If the query mentions 'partner profile', 'WE20', 'IDoc status 51', "
-                f"or 'logical system' — any candidate about partner profile configuration "
-                f"MUST score >= 70 regardless of exact wording differences.\n\n"
+                f"even if wording differs.\n\n"
+                f"Scoring: 90-100=same error+fix, 70-89=same error different fix, "
+                f"50-69=related, 20-49=loosely related, 0-19=unrelated.\n\n"
                 f"Query error:\n{query[:400]}\n\n"
                 f"Candidates:\n{candidates_text}"
                 f"Return ONLY a JSON array: [score1, score2, ...] — no explanation."
@@ -207,17 +202,15 @@ def kb_search(
             match = _re.search(r'\[[\d,\s]+\]', raw_scores)
             if match:
                 scores = json.loads(match.group())
-                reranked = []
                 for i, r in enumerate(all_results):
-                    score = scores[i] if i < len(scores) else 0
-                    if score >= 30:   # Low cutoff — show user everything relevant
-                        r["relevance_score"] = score
-                        reranked.append(r)
-                reranked.sort(key=lambda r: r.get("relevance_score", 0), reverse=True)
-                all_results = reranked
-            # If parsing fails, keep all vector results (no filtering = safe fallback)
+                    r["relevance_score"] = scores[i] if i < len(scores) else None
+                # Sort by relevance score if available, else by similarity
+                all_results.sort(
+                    key=lambda r: r.get("relevance_score") or (r.get("similarity", 0) * 100),
+                    reverse=True
+                )
         except Exception:
-            pass
+            pass  # Reranking failed — keep vector results sorted by similarity
 
     if project_id and client_id:
         summary_label = "Project + Client + Global KB"
