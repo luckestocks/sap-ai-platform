@@ -70,7 +70,7 @@ def kb_search(
     query: str,
     project_id: str = None,
     client_id: str = None,
-    threshold: float = 0.40,   # Low threshold — reranker filters false positives
+    threshold: float = 0.30,   # Low threshold — reranker filters false positives
     match_count: int = 15,     # More candidates for reranker to work with
     llm_fn=None,
 ) -> dict:
@@ -174,9 +174,7 @@ def kb_search(
 
     all_results.sort(key=lambda r: r.get("similarity", 0), reverse=True)
 
-    # Stage 2: LLM reranking — only if we have candidates and an LLM function
-    # Scores each candidate 0-100 for relevance to the original query.
-    # Filters out false positives that slipped through the low vector threshold.
+    # Stage 2: LLM reranking
     if all_results and llm_fn is not None:
         try:
             candidates_text = ""
@@ -187,34 +185,38 @@ def kb_search(
                 )
 
             rerank_prompt = (
-                f"You are an SAP expert. Score each candidate resolution for relevance "
-                f"to the query error. Return ONLY a JSON array of integers (scores 0-100), "
-                f"one per candidate, in the same order. No explanation.\n\n"
-                f"Query error:\n{query[:300]}\n\n"
+                f"You are an SAP expert. Score each candidate resolution 0-100 for relevance "
+                f"to the query error. Focus on functional similarity — same root cause = high score "
+                f"even if the wording differs completely.\n\n"
+                f"Scoring guide:\n"
+                f"  90-100 = same error, same fix\n"
+                f"  70-89  = same error, different fix approach\n"
+                f"  50-69  = related error, partially applicable fix\n"
+                f"  20-49  = loosely related\n"
+                f"  0-19   = unrelated\n\n"
+                f"IMPORTANT: If the query mentions 'partner profile', 'WE20', 'IDoc status 51', "
+                f"or 'logical system' — any candidate about partner profile configuration "
+                f"MUST score >= 70 regardless of exact wording differences.\n\n"
+                f"Query error:\n{query[:400]}\n\n"
                 f"Candidates:\n{candidates_text}"
-                f"Return format: [score1, score2, ...]\n"
-                f"Rules: 100=exact match, 70+=relevant, <50=unrelated. "
-                f"Same functional issue = high score regardless of phrasing."
+                f"Return ONLY a JSON array: [score1, score2, ...] — no explanation."
             )
             raw_scores, _ = llm_fn(rerank_prompt)
 
-            # Parse scores safely
             import json, re as _re
             match = _re.search(r'\[[\d,\s]+\]', raw_scores)
             if match:
                 scores = json.loads(match.group())
-                # Apply scores — filter out anything below 50
                 reranked = []
                 for i, r in enumerate(all_results):
                     score = scores[i] if i < len(scores) else 0
-                    if score >= 50:
+                    if score >= 30:   # Low cutoff — show user everything relevant
                         r["relevance_score"] = score
                         reranked.append(r)
-                # Sort by relevance score descending
                 reranked.sort(key=lambda r: r.get("relevance_score", 0), reverse=True)
                 all_results = reranked
+            # If parsing fails, keep all vector results (no filtering = safe fallback)
         except Exception:
-            # Reranking failed — return vector results as-is (still useful)
             pass
 
     if project_id and client_id:
